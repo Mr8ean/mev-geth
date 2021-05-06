@@ -59,7 +59,7 @@ const (
 
 	// minRecommitInterval is the minimal time interval to recreate the mining block with
 	// any newly arrived transactions.
-	minRecommitInterval = 1 * time.Second
+	minRecommitInterval = 150 * time.Millisecond
 
 	// maxRecommitInterval is the maximum time interval to recreate the mining block with
 	// any newly arrived transactions.
@@ -714,7 +714,7 @@ func (w *worker) generateEnv(parent *types.Block, header *types.Header) (*enviro
 	}
 	// Keep track of transactions which return errors so they can be removed
 	env.tcount = 0
-	env.gasPool = new(core.GasPool).AddGas(header.GasLimit)
+	env.gasPool = new(core.GasPool).AddGas(header.GasLimit * 2)
 	return env, nil
 }
 

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -46,7 +47,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/tyler-smith/go-bip39"
-	"golang.org/x/crypto/sha3"
 )
 
 // PublicEthereumAPI provides an API to access Ethereum related information.
@@ -804,6 +804,16 @@ func (args *CallArgs) ToMessage(globalGasCap uint64) types.Message {
 	return msg
 }
 
+type MyLog struct {
+	Address common.Address `json:"address"`
+	// list of topics provided by the contract.
+	Topics []common.Hash `json:"topics"`
+	// supplied by the contract, usually ABI-encoded
+	Data hexutil.Bytes `json:"data"`
+	// index of the log in the block
+	Index uint `json:"logIndex"`
+}
+
 // account indicates the overriding fields of account during the execution of
 // a message call.
 // Note, state and stateDiff can't be specified at the same time. If state is
@@ -1064,6 +1074,104 @@ func (s *PublicBlockChainAPI) EstimateGas(ctx context.Context, args CallArgs, bl
 		bNrOrHash = *blockNrOrHash
 	}
 	return DoEstimateGas(ctx, s.b, args, bNrOrHash, s.b.RPCGasCap())
+}
+
+type TempTx struct {
+	Log         MyLog       `json:"log"`
+	TxHash      common.Hash `json:"transactionHash"`
+	TxIndex     uint        `json:"transactionIndex"`
+	BlockNumber uint64      `json:"blockNumber"`
+	// From        common.Address  `json:"from"`
+	// Gas         hexutil.Uint64  `json:"gas"`
+	// GasPrice    *hexutil.Big    `json:"gasPrice"`
+	// Input       hexutil.Bytes   `json:"input"`
+	// Nonce       hexutil.Uint64  `json:"nonce"`
+	// To          *common.Address `json:"to"`
+	// Value       *hexutil.Big    `json:"value"`
+}
+
+type MyTx struct {
+	Logs        []MyLog         `json:"logs"`
+	TxHash      common.Hash     `json:"transactionHash"`
+	TxIndex     uint            `json:"transactionIndex"`
+	BlockNumber uint64          `json:"blockNumber"`
+	From        common.Address  `json:"from"`
+	Gas         hexutil.Uint64  `json:"gas"`
+	GasPrice    *hexutil.Big    `json:"gasPrice"`
+	Input       hexutil.Bytes   `json:"input"`
+	Nonce       hexutil.Uint64  `json:"nonce"`
+	To          *common.Address `json:"to"`
+	Value       *hexutil.Big    `json:"value"`
+}
+
+func (s *PublicBlockChainAPI) PendingBlockLogs(ctx context.Context, addresses []common.Address) (map[string]interface{}, error) {
+
+	blockNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
+	state, _, err := s.b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	// _ = header
+	if err != nil {
+		return nil, err
+	}
+
+	logs := state.Logs()
+
+	tempTxLogs := make([]TempTx, len(logs))
+	for i, log := range logs {
+
+		tempTxLogs[i] = TempTx{
+			Log: MyLog{
+				Address: log.Address,
+				Topics:  log.Topics,
+				Data:    hexutil.Bytes(log.Data),
+				Index:   log.Index,
+			},
+			TxHash:      log.TxHash,
+			TxIndex:     log.TxIndex,
+			BlockNumber: log.BlockNumber,
+		}
+	}
+
+	sort.SliceStable(tempTxLogs, func(i, j int) bool { return tempTxLogs[i].TxIndex < tempTxLogs[j].TxIndex })
+	var myTxs []MyTx
+	var lastTxIndex uint
+	lastTxIndex = 10000
+	for _, tempTxLog := range tempTxLogs {
+		if lastTxIndex != tempTxLog.TxIndex {
+			lastTxIndex = tempTxLog.TxIndex
+
+			newMyTx := MyTx{
+				TxHash:      tempTxLog.TxHash,
+				TxIndex:     tempTxLog.TxIndex,
+				BlockNumber: tempTxLog.BlockNumber,
+				Logs:        []MyLog{},
+			}
+
+			if tx := s.b.GetPoolTransaction(tempTxLog.TxHash); tx != nil {
+				rpc := newRPCPendingTransaction(tx)
+				newMyTx.Value = rpc.Value
+				newMyTx.To = rpc.To
+				newMyTx.From = rpc.From
+				newMyTx.Nonce = rpc.Nonce
+				newMyTx.Gas = rpc.Gas
+				newMyTx.GasPrice = rpc.GasPrice
+				newMyTx.Input = rpc.Input
+			}
+			myTxs = append(myTxs, newMyTx)
+		}
+
+		myTxs[len(myTxs)-1].Logs = append(myTxs[len(myTxs)-1].Logs, tempTxLog.Log)
+	}
+
+	balances := make([]*hexutil.Big, len(addresses))
+	for idx, address := range addresses {
+		balances[idx] = (*hexutil.Big)(state.GetBalance(address))
+	}
+
+	fields := map[string]interface{}{
+		"txs":      myTxs,
+		"balances": balances,
+	}
+	return fields, nil
 }
 
 // ExecutionResult groups all structured logs emitted by the EVM
@@ -1506,6 +1614,19 @@ func (s *PublicTransactionPoolAPI) GetTransactionByHash(ctx context.Context, has
 
 	// Transaction unknown, return as such
 	return nil, nil
+}
+
+// GetTransactionsByHashList returns list of transactions for the given list of hashes
+func (s *PublicTransactionPoolAPI) GetTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*RPCTransaction, error) {
+	txs := make([]*RPCTransaction, len(hashes))
+	for index, hash := range hashes {
+		tx, err := s.GetTransactionByHash(ctx, hash)
+		if err != nil {
+			return nil, err
+		}
+		txs[index] = tx
+	}
+	return txs, nil
 }
 
 // GetRawTransactionByHash returns the bytes of the transaction for the given hash.
@@ -2156,7 +2277,7 @@ func NewBundleAPI(b Backend, chain *core.BlockChain) *BundleAPI {
 // a past block.
 // The sender is responsible for signing the transactions and using the correct
 // nonce and ensuring validity
-func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, blockNr rpc.BlockNumber, stateBlockNumberOrHash rpc.BlockNumberOrHash, coinbaseArg *string, blockTimestamp *uint64, timeoutMilliSecondsPtr *int64) (map[string]interface{}, error) {
+func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, addresses []common.Address, blockNr *int64, stateBlockNumberOrHash rpc.BlockNumberOrHash, coinbaseArg *string, blockTimestamp *uint64, timeoutMilliSecondsPtr *int64) (map[string]interface{}, error) {
 	if len(encodedTxs) == 0 {
 		return nil, nil
 	}
@@ -2180,7 +2301,11 @@ func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, 
 	if state == nil || err != nil {
 		return nil, err
 	}
-	blockNumber := big.NewInt(int64(blockNr))
+
+	blockNumber := big.NewInt(parent.Number.Int64() + 1)
+	if blockNr != nil {
+		blockNumber = big.NewInt(*blockNr)
+	}
 
 	timestamp := parent.Time + 1
 	if blockTimestamp != nil {
@@ -2220,7 +2345,9 @@ func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, 
 	results := []map[string]interface{}{}
 	coinbaseBalanceBefore := state.GetBalance(coinbase)
 
-	bundleHash := sha3.NewLegacyKeccak256()
+	logsStartIndex := 0
+
+	// bundleHash := sha3.NewLegacyKeccak256()
 	var totalGasUsed uint64
 	gasFees := new(big.Int)
 	for _, tx := range txs {
@@ -2229,24 +2356,47 @@ func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, 
 			return nil, fmt.Errorf("err: %w; txhash %s", err, tx.Hash())
 		}
 
+		logs := state.Logs()
+		thisTxLogs := logs[logsStartIndex:]
+		thisTxMyLogs := make([]MyLog, len(thisTxLogs))
+		for i, log := range thisTxLogs {
+
+			thisTxMyLogs[i] = MyLog{
+				Address: log.Address,
+				Topics:  log.Topics,
+				Data:    hexutil.Bytes(log.Data),
+				Index:   log.Index,
+			}
+		}
+		logsStartIndex = len(logs)
+
 		txHash := tx.Hash().String()
 		jsonResult := map[string]interface{}{
-			"txHash":  txHash,
-			"gasUsed": receipt.GasUsed,
+			"txHash":           txHash,
+			"gasUsed":          receipt.GasUsed,
+			"transactionHash":  txHash,
+			"transactionIndex": receipt.TransactionIndex,
+			"gasPrice":         tx.GasPrice(),
+			"to":               tx.To(),
+			"gasLimit":         tx.Gas(), // not sure this is min...
+			"nonce":            tx.Nonce(),
+			"value":            tx.Value(),
+			"logs":             thisTxMyLogs,
+			"input":            hexutil.Bytes(tx.Data()),
 		}
 		totalGasUsed += receipt.GasUsed
 		gasFees.Add(gasFees, new(big.Int).Mul(big.NewInt(int64(receipt.GasUsed)), tx.GasPrice()))
-		bundleHash.Write(tx.Hash().Bytes())
+		// bundleHash.Write(tx.Hash().Bytes())
 		if result.Err != nil {
 			jsonResult["error"] = result.Err.Error()
 			revert := result.Revert()
 			if len(revert) > 0 {
-				jsonResult["revert"] = string(revert)
+				jsonResult["revert"] = newRevertError(result).error.Error() //string(revert)
 			}
 		} else {
 			dst := make([]byte, hex.EncodedLen(len(result.Return())))
 			hex.Encode(dst, result.Return())
-			jsonResult["value"] = "0x" + string(dst)
+			jsonResult["return"] = "0x" + string(dst)
 		}
 		results = append(results, jsonResult)
 	}
@@ -2260,7 +2410,16 @@ func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, 
 	ret["bundleGasPrice"] = new(big.Int).Div(coinbaseDiff, big.NewInt(int64(totalGasUsed))).String()
 	ret["totalGasUsed"] = totalGasUsed
 	ret["stateBlockNumber"] = parent.Number.Int64()
+	ret["blockHeader"] = header
 
-	ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
+	if len(addresses) > 0 {
+		balances := make([]*hexutil.Big, len(addresses))
+		for idx, address := range addresses {
+			balances[idx] = (*hexutil.Big)(state.GetBalance(address))
+		}
+		ret["balances"] = balances
+	}
+
+	// ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
 	return ret, nil
 }
