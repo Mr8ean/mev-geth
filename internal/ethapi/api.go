@@ -2549,7 +2549,7 @@ func NewBundleAPI(b Backend, chain *core.BlockChain) *BundleAPI {
 // a past block.
 // The sender is responsible for signing the transactions and using the correct
 // nonce and ensuring validity
-func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, addresses []common.Address, blockNr *int64, stateBlockNumberOrHash rpc.BlockNumberOrHash, coinbaseArg *string, blockTimestamp *uint64, timeoutMilliSecondsPtr *int64) (map[string]interface{}, error) {
+func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, addresses []common.Address, blockNr *int64, stateBlockNumberOrHash rpc.BlockNumberOrHash, coinbaseArg *string, blockTimestamp *uint64, timeoutMilliSecondsPtr *int64, overrides map[common.Address]account) (map[string]interface{}, error) {
 	if len(encodedTxs) == 0 {
 		return nil, nil
 	}
@@ -2572,6 +2572,36 @@ func (s *BundleAPI) CallBundle(ctx context.Context, encodedTxs []hexutil.Bytes, 
 	state, parent, err := s.b.StateAndHeaderByNumberOrHash(ctx, stateBlockNumberOrHash)
 	if state == nil || err != nil {
 		return nil, err
+	}
+
+	if overrides != nil {
+		for addr, account := range overrides {
+			// Override account nonce.
+			if account.Nonce != nil {
+				state.SetNonce(addr, uint64(*account.Nonce))
+			}
+			// Override account(contract) code.
+			if account.Code != nil {
+				state.SetCode(addr, *account.Code)
+			}
+			// Override account balance.
+			if account.Balance != nil {
+				state.SetBalance(addr, (*big.Int)(*account.Balance))
+			}
+			if account.State != nil && account.StateDiff != nil {
+				return nil, fmt.Errorf("account %s has both 'state' and 'stateDiff'", addr.Hex())
+			}
+			// Replace entire state if caller requires.
+			if account.State != nil {
+				state.SetStorage(addr, *account.State)
+			}
+			// Apply state diff into specified accounts.
+			if account.StateDiff != nil {
+				for key, value := range *account.StateDiff {
+					state.SetState(addr, key, value)
+				}
+			}
+		}
 	}
 
 	blockNumber := big.NewInt(parent.Number.Int64() + 1)
