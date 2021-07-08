@@ -2063,9 +2063,20 @@ func NewBundleAPI(b Backend, chain *core.BlockChain) *BundleAPI {
 	return &BundleAPI{b, chain}
 }
 
+type MyLog struct {
+	Address common.Address `json:"address"`
+	// list of topics provided by the contract.
+	Topics []common.Hash `json:"topics"`
+	// supplied by the contract, usually ABI-encoded
+	Data hexutil.Bytes `json:"data"`
+	// index of the log in the block
+	Index uint `json:"logIndex"`
+}
+
 // SendBundleArgs represents the arguments for a call.
 type CallBundleArgs struct {
 	Txs                    []hexutil.Bytes       `json:"txs"`
+	AccountsToGetBalance   []common.Address      `json:"accountsToGetBalance"`
 	BlockNumber            rpc.BlockNumber       `json:"blockNumber"`
 	StateBlockNumberOrHash rpc.BlockNumberOrHash `json:"stateBlockNumber"`
 	Coinbase               *string               `json:"coinbase"`
@@ -2165,6 +2176,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	results := []map[string]interface{}{}
 	coinbaseBalanceBefore := state.GetBalance(coinbase)
 
+	logsStartIndex := 0
 	bundleHash := sha3.NewLegacyKeccak256()
 	signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
 	var totalGasUsed uint64
@@ -2178,6 +2190,20 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 			return nil, fmt.Errorf("err: %w; txhash %s", err, tx.Hash())
 		}
 
+		logs := state.Logs()
+		thisTxLogs := logs[logsStartIndex:]
+		thisTxMyLogs := make([]MyLog, len(thisTxLogs))
+		for i, log := range thisTxLogs {
+
+			thisTxMyLogs[i] = MyLog{
+				Address: log.Address,
+				Topics:  log.Topics,
+				Data:    hexutil.Bytes(log.Data),
+				Index:   log.Index,
+			}
+		}
+		logsStartIndex = len(logs)
+
 		txHash := tx.Hash().String()
 		from, err := types.Sender(signer, tx)
 		if err != nil {
@@ -2188,10 +2214,18 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 			to = tx.To().String()
 		}
 		jsonResult := map[string]interface{}{
-			"txHash":      txHash,
-			"gasUsed":     receipt.GasUsed,
-			"fromAddress": from.String(),
-			"toAddress":   to,
+			"txHash":           txHash,
+			"gasUsed":          receipt.GasUsed,
+			"transactionHash":  txHash,
+			"from":             from.String(),
+			"to":               to,
+			"transactionIndex": receipt.TransactionIndex,
+			"gasPrice":         tx.GasPrice(),
+			"gasLimit":         tx.Gas(), // not sure this is min...
+			"nonce":            tx.Nonce(),
+			"value":            tx.Value(),
+			"logs":             thisTxMyLogs,
+			"input":            hexutil.Bytes(tx.Data()),
 		}
 		totalGasUsed += receipt.GasUsed
 		gasPrice, err := tx.EffectiveGasTip(header.BaseFee)
@@ -2205,7 +2239,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 			jsonResult["error"] = result.Err.Error()
 			revert := result.Revert()
 			if len(revert) > 0 {
-				jsonResult["revert"] = string(revert)
+				jsonResult["revert"] = newRevertError(result).error.Error()
 			}
 		} else {
 			dst := make([]byte, hex.EncodedLen(len(result.Return())))
@@ -2216,8 +2250,8 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 		jsonResult["coinbaseDiff"] = coinbaseDiffTx.String()
 		jsonResult["gasFees"] = gasFeesTx.String()
 		jsonResult["ethSentToCoinbase"] = new(big.Int).Sub(coinbaseDiffTx, gasFeesTx).String()
-		jsonResult["gasPrice"] = new(big.Int).Div(coinbaseDiffTx, big.NewInt(int64(receipt.GasUsed))).String()
-		jsonResult["gasUsed"] = receipt.GasUsed
+		// jsonResult["gasPrice"] = new(big.Int).Div(coinbaseDiffTx, big.NewInt(int64(receipt.GasUsed))).String()
+		// jsonResult["gasUsed"] = receipt.GasUsed
 		results = append(results, jsonResult)
 	}
 
@@ -2230,7 +2264,16 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	ret["bundleGasPrice"] = new(big.Int).Div(coinbaseDiff, big.NewInt(int64(totalGasUsed))).String()
 	ret["totalGasUsed"] = totalGasUsed
 	ret["stateBlockNumber"] = parent.Number.Int64()
-
+	ret["blockHeader"] = header
 	ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
+
+	if len(args.AccountsToGetBalance) > 0 {
+		balances := make([]*hexutil.Big, len(args.AccountsToGetBalance))
+		for idx, address := range args.AccountsToGetBalance {
+			balances[idx] = (*hexutil.Big)(state.GetBalance(address))
+		}
+		ret["balances"] = balances
+	}
+
 	return ret, nil
 }
