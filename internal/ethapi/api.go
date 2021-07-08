@@ -879,6 +879,75 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	return result, nil
 }
 
+func DoCallForList(ctx context.Context, b Backend, args TransactionArgs, callctx *callContext, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride, vmCfg vm.Config, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, *callContext, error) {
+	defer func(start time.Time) { log.Debug("Executing EVM call finished", "runtime", time.Since(start)) }(time.Now())
+
+	if callctx == nil {
+		state, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+		if err != nil {
+			return nil, nil, err
+		}
+		callctx = &callContext{
+			state:  state,
+			header: header,
+		}
+	}
+
+	// Override the fields of specified contracts before execution.
+	// Note if the call context is not nil(we are executing a serial
+	// of calls), don't apply the diff multi-time.
+	if overrides != nil && !callctx.overridden {
+		if err := overrides.Apply(callctx.state); err != nil {
+			return nil, nil, err
+		}
+		callctx.overridden = true
+	}
+	// Setup context so it may be cancelled the call has completed
+	// or, in case of unmetered gas, setup a context with a timeout.
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	// Make sure the context is cancelled when the call has completed
+	// this makes sure resources are cleaned up.
+	defer cancel()
+
+	// Get a new instance of the EVM.
+	msg, err := args.ToMessage(globalGasCap, callctx.header.BaseFee)
+	if err != nil {
+		return nil, nil, err
+	}
+	evm, vmError, err := b.GetEVM(ctx, msg, callctx.state, callctx.header, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Wait for the context to be done and cancel the evm. Even if the
+	// EVM has finished, cancelling may be done (repeatedly)
+	go func() {
+		<-ctx.Done()
+		evm.Cancel()
+	}()
+
+	// Setup the gas pool (also for unmetered requests)
+	// and apply the message.
+	gp := new(core.GasPool).AddGas(math.MaxUint64)
+	result, err := core.ApplyMessage(evm, msg, gp)
+	if err := vmError(); err != nil {
+		return nil, nil, err
+	}
+	// If the timer caused an abort, return an appropriate error message
+	if evm.Cancelled() {
+		return nil, nil, fmt.Errorf("execution aborted (timeout = %v)", timeout)
+	}
+	if err != nil {
+		return result, nil, fmt.Errorf("err: %w (supplied gas %d)", err, msg.Gas())
+	}
+	callctx.state.Finalise(b.ChainConfig().IsEIP158(callctx.header.Number))
+	return result, callctx, err
+}
+
 func newRevertError(result *core.ExecutionResult) *revertError {
 	reason, errUnpack := abi.UnpackRevert(result.Revert())
 	err := errors.New("execution reverted")
@@ -907,6 +976,21 @@ func (e *revertError) ErrorCode() int {
 // ErrorData returns the hex encoded revert reason.
 func (e *revertError) ErrorData() interface{} {
 	return e.reason
+}
+
+type callContext struct {
+	state      *state.StateDB // The state used to execute call
+	header     *types.Header  // The associated header, it should be **immutable**
+	overridden bool           // Indicator whether the call state has been overriden
+}
+
+// copy returns the copied instance of call environment.
+func (callctx *callContext) copy() *callContext {
+	return &callContext{
+		state:      callctx.state.Copy(),
+		header:     callctx.header,
+		overridden: callctx.overridden,
+	}
 }
 
 // Call executes the given transaction on the state for the given block number.
@@ -1036,6 +1120,148 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 	return hexutil.Uint64(hi), nil
 }
 
+func DoEstimateGasRawTx(ctx context.Context, b Backend, tx *types.Transaction, callctx *callContext, blockNrOrHash rpc.BlockNumberOrHash, gasCap uint64, overrides *StateOverride) (hexutil.Uint64, *callContext, error) {
+
+	// Binary search the gas requirement, as it may be higher than the amount used
+	var (
+		lo  uint64 = params.TxGas - 1
+		hi  uint64
+		cap uint64
+	)
+	msg, err := tx.AsMessage(types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number()), callctx.header.BaseFee)
+	if err != nil {
+		return 0, nil, err
+	}
+	from := msg.From()
+	data := hexutil.Bytes(msg.Data())
+	accList := msg.AccessList()
+	gas := msg.Gas()
+
+	args := TransactionArgs{
+		From:       &from,
+		To:         msg.To(),
+		Gas:        (*hexutil.Uint64)(&gas),
+		GasPrice:   (*hexutil.Big)(msg.GasPrice()),
+		Value:      (*hexutil.Big)(msg.Value()),
+		Data:       &data,
+		AccessList: &accList,
+		// MaxFeePerGas:         (*hexutil.Big)(msg.GasFeeCap()),
+		// MaxPriorityFeePerGas: (*hexutil.Big)(msg.GasFeeCap()),
+		ChainID: (*hexutil.Big)(tx.ChainId()),
+	}
+
+	if err := args.setDefaults(ctx, b); err != nil {
+		return 0, nil, err
+	}
+	// Use zero address if sender unspecified.
+	if args.From == nil {
+		args.From = new(common.Address)
+	}
+	// Determine the highest gas limit can be used during the estimation.
+	if args.Gas != nil && uint64(*args.Gas) >= params.TxGas {
+		hi = uint64(*args.Gas)
+	} else {
+		// Retrieve the block to act as the gas ceiling
+		block, err := b.BlockByNumberOrHash(ctx, blockNrOrHash)
+		if err != nil {
+			return 0, nil, err
+		}
+		if block == nil {
+			return 0, nil, errors.New("block not found")
+		}
+		hi = block.GasLimit()
+	}
+	// Recap the highest gas limit with account's available balance.
+	// if args.GasPrice != nil && args.GasPrice.ToInt().BitLen() != 0 {
+	// 	state, _, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	// 	if err != nil {
+	// 		return 0, nil, err
+	// 	}
+	// 	balance := state.GetBalance(*args.From) // from can't be nil
+	// 	available := new(big.Int).Set(balance)
+	// 	if args.Value != nil {
+	// 		if args.Value.ToInt().Cmp(available) >= 0 {
+	// 			return 0, nil, errors.New("insufficient funds for transfer")
+	// 		}
+	// 		available.Sub(available, args.Value.ToInt())
+	// 	}
+	// 	allowance := new(big.Int).Div(available, args.GasPrice.ToInt())
+
+	// 	// If the allowance is larger than maximum uint64, skip checking
+	// 	if allowance.IsUint64() && hi > allowance.Uint64() {
+	// 		transfer := args.Value
+	// 		if transfer == nil {
+	// 			transfer = new(hexutil.Big)
+	// 		}
+	// 		log.Warn("Gas estimation capped by limited funds", "original", hi, "balance", balance,
+	// 			"sent", transfer.ToInt(), "gasprice", args.GasPrice.ToInt(), "fundable", allowance)
+	// 		hi = allowance.Uint64()
+	// 	}
+	// }
+	// Recap the highest gas allowance with specified gascap.
+	if gasCap != 0 && hi > gasCap {
+		log.Warn("Caller gas above allowance, capping", "requested", hi, "cap", gasCap)
+		hi = gasCap
+	}
+	cap = hi
+
+	// Create a helper to check if a gas allowance results in an executable transaction
+	executable := func(gas uint64) (bool, *core.ExecutionResult, *callContext, error) {
+		args.Gas = (*hexutil.Uint64)(&gas)
+
+		var callctxcopy *callContext
+		if callctx != nil {
+			callctxcopy = callctx.copy()
+		}
+		result, after, err := DoCallForList(ctx, b, args, callctxcopy, blockNrOrHash, overrides, vm.Config{}, 0, gasCap)
+		if err != nil {
+			if errors.Is(err, core.ErrIntrinsicGas) {
+				return true, nil, nil, nil // Special case, raise gas limit
+			}
+			return true, nil, nil, err // Bail out
+		}
+		return result.Failed(), result, after, nil
+	}
+	// Execute the binary search and hone in on an executable gas limit
+	var after *callContext
+
+	for lo+1 < hi {
+		mid := (hi + lo) / 2
+		failed, _, callctx, err := executable(mid)
+
+		// If the error is not nil(consensus error), it means the provided message
+		// call or transaction will never be accepted no matter how much gas it is
+		// assigned. Return the error directly, don't struggle any more.
+		if err != nil {
+			return 0, nil, err
+		}
+		if failed {
+			lo = mid
+		} else {
+			hi, after = mid, callctx
+		}
+	}
+	// Reject the transaction as invalid if it still fails at the highest allowance
+	if hi == cap {
+		failed, result, callctx, err := executable(hi)
+		if err != nil {
+			return 0, nil, err
+		}
+		if failed {
+			if result != nil && result.Err != vm.ErrOutOfGas {
+				if len(result.Revert()) > 0 {
+					return 0, nil, newRevertError(result)
+				}
+				return 0, nil, result.Err
+			}
+			// Otherwise, the specified gas cap is too low
+			return 0, nil, fmt.Errorf("gas required exceeds allowance (%d)", cap)
+		}
+		after = callctx
+	}
+	return hexutil.Uint64(hi), after, nil
+}
+
 // EstimateGas returns an estimate of the amount of gas needed to execute the
 // given transaction against the current pending block.
 func (s *PublicBlockChainAPI) EstimateGas(ctx context.Context, args TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash) (hexutil.Uint64, error) {
@@ -1044,6 +1270,33 @@ func (s *PublicBlockChainAPI) EstimateGas(ctx context.Context, args TransactionA
 		bNrOrHash = *blockNrOrHash
 	}
 	return DoEstimateGas(ctx, s.b, args, bNrOrHash, s.b.RPCGasCap())
+}
+
+// EstimateGasListRawTxs returns an estimate of the amount of gas needed to execute list of
+// given raw transactions against the current pending block.
+func (s *PublicBlockChainAPI) EstimateGasListRawTxs(ctx context.Context, encodedTxList []hexutil.Bytes, overrides *StateOverride) ([]hexutil.Uint64, error) {
+
+	blockNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+	var (
+		gas     hexutil.Uint64
+		err     error
+		callctx *callContext
+	)
+
+	res := make([]hexutil.Uint64, len(encodedTxList))
+	for idx, encodedTx := range encodedTxList {
+		tx := new(types.Transaction)
+		if err := tx.UnmarshalBinary(encodedTx); err != nil {
+			return nil, err
+		}
+
+		gas, callctx, err = DoEstimateGasRawTx(ctx, s.b, tx, callctx, blockNrOrHash, s.b.RPCGasCap(), overrides)
+		if err != nil {
+			return nil, err
+		}
+		res[idx] = gas
+	}
+	return res, nil
 }
 
 // ExecutionResult groups all structured logs emitted by the EVM
@@ -1510,6 +1763,19 @@ func (s *PublicTransactionPoolAPI) GetTransactionByHash(ctx context.Context, has
 
 	// Transaction unknown, return as such
 	return nil, nil
+}
+
+// GetTransactionsByHashList returns list of transactions for the given list of hashes
+func (s *PublicTransactionPoolAPI) GetTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*RPCTransaction, error) {
+	txs := make([]*RPCTransaction, len(hashes))
+	for index, hash := range hashes {
+		tx, err := s.GetTransactionByHash(ctx, hash)
+		if err != nil {
+			return nil, err
+		}
+		txs[index] = tx
+	}
+	return txs, nil
 }
 
 // GetRawTransactionByHash returns the bytes of the transaction for the given hash.
