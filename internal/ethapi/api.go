@@ -1128,7 +1128,7 @@ func DoEstimateGasRawTx(ctx context.Context, b Backend, tx *types.Transaction, c
 		hi  uint64
 		cap uint64
 	)
-	msg, err := tx.AsMessage(types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number()), callctx.header.BaseFee)
+	msg, err := tx.AsMessage(types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number()), b.CurrentBlock().BaseFee())
 	if err != nil {
 		return 0, nil, err
 	}
@@ -2363,9 +2363,6 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	if len(args.Txs) == 0 {
 		return nil, errors.New("bundle missing txs")
 	}
-	if args.BlockNumber == 0 {
-		return nil, errors.New("bundle missing blockNumber")
-	}
 
 	var txs types.Transactions
 
@@ -2390,8 +2387,12 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	if err := overrides.Apply(state); err != nil {
 		return nil, err
 	}
-
-	blockNumber := big.NewInt(int64(args.BlockNumber))
+	var blockNumber *big.Int
+	if args.BlockNumber == 0 {
+		blockNumber = big.NewInt(parent.Number.Int64() + 1)
+	} else {
+		blockNumber = big.NewInt(int64(args.BlockNumber))
+	}
 
 	timestamp := parent.Time + 1
 	if args.Timestamp != nil {
@@ -2515,6 +2516,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			dst := make([]byte, hex.EncodedLen(len(result.Return())))
 			hex.Encode(dst, result.Return())
 			jsonResult["value"] = "0x" + string(dst)
+			jsonResult["return"] = "0x" + string(dst)
 		}
 		coinbaseDiffTx := new(big.Int).Sub(state.GetBalance(coinbase), coinbaseBalanceBeforeTx)
 		jsonResult["coinbaseDiff"] = coinbaseDiffTx.String()
