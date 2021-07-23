@@ -2470,12 +2470,12 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	if args.GasLimit != nil {
 		gasLimit = *args.GasLimit
 	}
-	// var baseFee *big.Int
+	var baseFee *big.Int
 	// if args.BaseFee != nil {
 	// 	baseFee = args.BaseFee
-	// } else if s.b.ChainConfig().IsLondon(big.NewInt(args.BlockNumber.Int64())) {
-	// 	baseFee = misc.CalcBaseFee(s.b.ChainConfig(), parent)
-	// }
+	if s.b.ChainConfig().IsLondon(blockNumber) {
+		baseFee = misc.CalcBaseFee(s.b.ChainConfig(), parent)
+	}
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     blockNumber,
@@ -2483,7 +2483,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		Time:       timestamp,
 		Difficulty: difficulty,
 		Coinbase:   coinbase,
-		// BaseFee:    baseFee,
+		BaseFee:    baseFee,
 	}
 
 	// Setup context so it may be cancelled the call has completed
