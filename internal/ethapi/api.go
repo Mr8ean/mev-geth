@@ -2509,7 +2509,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 
 		receipt, result, err := core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &header.GasUsed, vmconfig)
 		if err != nil {
-			return nil, fmt.Errorf("err: %w; txhash %s", err, tx.Hash())
+			return nil, fmt.Errorf("err1: %w; txhash %s", err, tx.Hash())
 		}
 
 		logs := state.Logs()
@@ -2529,7 +2529,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		txHash := tx.Hash().String()
 		from, err := types.Sender(signer, tx)
 		if err != nil {
-			return nil, fmt.Errorf("err: %w; txhash %s", err, tx.Hash())
+			return nil, fmt.Errorf("err2: %w; txhash %s", err, tx.Hash())
 		}
 		to := "0x"
 		if tx.To() != nil {
