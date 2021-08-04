@@ -2443,7 +2443,15 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	if state == nil || err != nil {
 		return nil, err
 	}
-	blockNumber := big.NewInt(int64(args.BlockNumber))
+	if err := overrides.Apply(state); err != nil {
+		return nil, err
+	}
+	var blockNumber *big.Int
+	if args.BlockNumber == 0 {
+		blockNumber = big.NewInt(parent.Number.Int64() + 1)
+	} else {
+		blockNumber = big.NewInt(int64(args.BlockNumber))
+	}
 
 	timestamp := parent.Time + 1
 	if args.Timestamp != nil {
@@ -2461,12 +2469,11 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	if args.GasLimit != nil {
 		gasLimit = *args.GasLimit
 	}
-	// var baseFee *big.Int
-	// // if args.BaseFee != nil {
-	// // 	baseFee = args.BaseFee
-	// if s.b.ChainConfig().IsLondon(blockNumber) {
-	// 	baseFee = misc.CalcBaseFee(s.b.ChainConfig(), parent)
-	// }
+
+	var baseFee *big.Int
+	if s.b.ChainConfig().IsLondon(blockNumber) {
+		baseFee = misc.CalcBaseFee(s.b.ChainConfig(), parent)
+	}
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     blockNumber,
@@ -2474,7 +2481,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		Time:       timestamp,
 		Difficulty: difficulty,
 		Coinbase:   coinbase,
-		// BaseFee:    baseFee,
+		BaseFee:    baseFee,
 	}
 
 	// Setup context so it may be cancelled the call has completed
