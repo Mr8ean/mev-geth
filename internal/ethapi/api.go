@@ -2517,7 +2517,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	coinbaseBalanceBefore := state.GetBalance(coinbase)
 
 	logsStartIndex := 0
-	bundleHash := sha3.NewLegacyKeccak256()
+	// bundleHash := sha3.NewLegacyKeccak256()
 	signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
 	var totalGasUsed uint64
 	gasFees := new(big.Int)
@@ -2574,7 +2574,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		}
 		gasFeesTx := new(big.Int).Mul(big.NewInt(int64(receipt.GasUsed)), gasPrice)
 		gasFees.Add(gasFees, gasFeesTx)
-		bundleHash.Write(tx.Hash().Bytes())
+		// bundleHash.Write(tx.Hash().Bytes())
 		if result.Err != nil {
 			jsonResult["error"] = result.Err.Error()
 			revert := result.Revert()
@@ -2606,7 +2606,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	ret["totalGasUsed"] = totalGasUsed
 	ret["stateBlockNumber"] = parent.Number.Int64()
 	ret["blockHeader"] = header
-	ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
+	// ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
 
 	if len(args.AccountsToGetBalance) > 0 {
 		balances := make([]*hexutil.Big, len(args.AccountsToGetBalance))
@@ -2617,4 +2617,26 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	}
 
 	return ret, nil
+}
+
+func (s *BundleAPI) GetBundleHash(ctx context.Context, rawTxs []hexutil.Bytes) (string, error) {
+	if len(rawTxs) == 0 {
+		return "", errors.New("no raw txs")
+	}
+
+	var txs types.Transactions
+	for _, encodedTx := range rawTxs {
+		tx := new(types.Transaction)
+		if err := tx.UnmarshalBinary(encodedTx); err != nil {
+			return "", err
+		}
+		txs = append(txs, tx)
+	}
+
+	bundleHash := sha3.NewLegacyKeccak256()
+	for _, tx := range txs {
+		bundleHash.Write(tx.Hash().Bytes())
+	}
+
+	return "0x" + common.Bytes2Hex(bundleHash.Sum(nil)), nil
 }
