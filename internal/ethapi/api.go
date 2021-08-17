@@ -1633,12 +1633,12 @@ type accessListResult struct {
 
 // CreateAccessList creates a EIP-2930 type AccessList for the given transaction.
 // Reexec and BlockNrOrHash can be specified to create the accessList on top of a certain state.
-func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args TransactionArgs, blockNrOrHashState *rpc.BlockNumberOrHash, blockNrOrHashHeader *rpc.BlockNumberOrHash) (*accessListResult, error) {
-	bNrOrHashState := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
-	if blockNrOrHashState != nil {
-		bNrOrHashState = *blockNrOrHashState
+func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash) (*accessListResult, error) {
+	bNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
+	if blockNrOrHash != nil {
+		bNrOrHash = *blockNrOrHash
 	}
-	acl, gasUsed, vmerr, err := AccessList(ctx, s.b, bNrOrHashState, args)
+	acl, gasUsed, vmerr, err := AccessList(ctx, s.b, bNrOrHash, args)
 	if err != nil {
 		return nil, err
 	}
