@@ -1638,11 +1638,7 @@ func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args Transac
 	if blockNrOrHashState != nil {
 		bNrOrHashState = *blockNrOrHashState
 	}
-	bNrOrHashHeader := bNrOrHashState
-	if blockNrOrHashHeader != nil {
-		bNrOrHashHeader = *blockNrOrHashHeader
-	}
-	acl, gasUsed, vmerr, err := AccessList(ctx, s.b, bNrOrHashState, args, bNrOrHashHeader)
+	acl, gasUsed, vmerr, err := AccessList(ctx, s.b, bNrOrHashState, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1656,14 +1652,10 @@ func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args Transac
 // AccessList creates an access list for the given transaction.
 // If the accesslist creation fails an error is returned.
 // If the transaction itself fails, an vmErr is returned.
-func AccessList(ctx context.Context, b Backend, blockNrOrHashState rpc.BlockNumberOrHash, args TransactionArgs, blockNrOrHashHeader rpc.BlockNumberOrHash) (acl types.AccessList, gasUsed uint64, vmErr error, err error) {
+func AccessList(ctx context.Context, b Backend, blockNrOrHashState rpc.BlockNumberOrHash, args TransactionArgs) (acl types.AccessList, gasUsed uint64, vmErr error, err error) {
 	// Retrieve the execution context
-	db, _, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHashState)
+	db, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHashState)
 	if db == nil || err != nil {
-		return nil, 0, nil, err
-	}
-	_, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHashHeader)
-	if err != nil {
 		return nil, 0, nil, err
 	}
 
