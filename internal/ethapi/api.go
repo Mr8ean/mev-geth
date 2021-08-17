@@ -1633,12 +1633,16 @@ type accessListResult struct {
 
 // CreateAccessList creates a EIP-2930 type AccessList for the given transaction.
 // Reexec and BlockNrOrHash can be specified to create the accessList on top of a certain state.
-func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash) (*accessListResult, error) {
-	bNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
-	if blockNrOrHash != nil {
-		bNrOrHash = *blockNrOrHash
+func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args TransactionArgs, blockNrOrHashState *rpc.BlockNumberOrHash, blockNrOrHashHeader *rpc.BlockNumberOrHash) (*accessListResult, error) {
+	bNrOrHashState := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
+	if blockNrOrHashState != nil {
+		bNrOrHashState = *blockNrOrHashState
 	}
-	acl, gasUsed, vmerr, err := AccessList(ctx, s.b, bNrOrHash, args)
+	bNrOrHashHeader := bNrOrHashState
+	if blockNrOrHashHeader != nil {
+		bNrOrHashHeader = *blockNrOrHashHeader
+	}
+	acl, gasUsed, vmerr, err := AccessList(ctx, s.b, bNrOrHashState, args, bNrOrHashHeader)
 	if err != nil {
 		return nil, err
 	}
@@ -1652,12 +1656,17 @@ func (s *PublicBlockChainAPI) CreateAccessList(ctx context.Context, args Transac
 // AccessList creates an access list for the given transaction.
 // If the accesslist creation fails an error is returned.
 // If the transaction itself fails, an vmErr is returned.
-func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrHash, args TransactionArgs) (acl types.AccessList, gasUsed uint64, vmErr error, err error) {
+func AccessList(ctx context.Context, b Backend, blockNrOrHashState rpc.BlockNumberOrHash, args TransactionArgs, blockNrOrHashHeader rpc.BlockNumberOrHash) (acl types.AccessList, gasUsed uint64, vmErr error, err error) {
 	// Retrieve the execution context
-	db, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	db, _, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHashState)
 	if db == nil || err != nil {
 		return nil, 0, nil, err
 	}
+	_, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHashHeader)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
 	// If the gas amount is not set, extract this as it will depend on access
 	// lists and we'll need to reestimate every time
 	nogas := args.Gas == nil
