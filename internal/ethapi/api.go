@@ -2654,3 +2654,150 @@ func (s *BundleAPI) GetBundleHash(ctx context.Context, rawTxs []hexutil.Bytes) (
 
 	return "0x" + common.Bytes2Hex(bundleHash.Sum(nil)), nil
 }
+
+func AccessListLastTx(ctx context.Context, b Backend, header *types.Header, lastTx *types.Transaction, state *state.StateDB) (acl types.AccessList, gasUsed uint64, vmErr error, err error) {
+	signer := types.MakeSigner(b.ChainConfig(), header.Number)
+	gas := lastTx.Gas()
+	data := hexutil.Bytes(lastTx.Data())
+	to := *lastTx.To()
+	from, err := types.Sender(signer, lastTx)
+	args := TransactionArgs{
+		From:     &from,
+		To:       &to,
+		Gas:      (*hexutil.Uint64)(&gas),
+		GasPrice: (*hexutil.Big)(lastTx.GasPrice()),
+		Value:    (*hexutil.Big)(lastTx.Value()),
+		Data:     &data,
+		ChainID:  (*hexutil.Big)(lastTx.ChainId()),
+	}
+
+	// If the gas amount is not set, extract this as it will depend on access
+	// lists and we'll need to reestimate every time
+	nogas := args.Gas == nil
+
+	// Retrieve the precompiles since they don't need to be added to the access list
+	precompiles := vm.ActivePrecompiles(b.ChainConfig().Rules(header.Number))
+
+	// Create an initial tracer
+	prevTracer := vm.NewAccessListTracer(nil, args.from(), to, precompiles)
+	if args.AccessList != nil {
+		prevTracer = vm.NewAccessListTracer(*args.AccessList, args.from(), to, precompiles)
+	}
+	for {
+		// Retrieve the current access list to expand
+		accessList := prevTracer.AccessList()
+		log.Trace("Creating access list", "input", accessList)
+
+		// If no gas amount was specified, each unique access list needs it's own
+		// gas calculation. This is quite expensive, but we need to be accurate
+		// and it's convered by the sender only anyway.
+		if nogas {
+			args.Gas = nil
+			if err := args.setDefaults(ctx, b); err != nil {
+				return nil, 0, nil, err // shouldn't happen, just in case
+			}
+		}
+		// Copy the original db so we don't modify it
+		statedb := state.Copy()
+		// Set the accesslist to the last al
+		args.AccessList = &accessList
+		msg, err := args.ToMessage(b.RPCGasCap(), header.BaseFee)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+
+		// Apply the transaction with the access list tracer
+		tracer := vm.NewAccessListTracer(accessList, args.from(), to, precompiles)
+		config := vm.Config{Tracer: tracer, Debug: true, NoBaseFee: true}
+		vmenv, _, err := b.GetEVM(ctx, msg, statedb, header, &config)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		res, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()))
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("failed to apply transaction: %v err: %v", args.toTransaction().Hash(), err)
+		}
+		if tracer.Equal(prevTracer) {
+			return accessList, res.UsedGas, res.Err, nil
+		}
+		prevTracer = tracer
+	}
+}
+
+func (s *BundleAPI) LastTxAccessList(ctx context.Context, rawTxs []hexutil.Bytes, StateBlockNumberOrHash rpc.BlockNumberOrHash) (*accessListResult, error) {
+	if len(rawTxs) == 0 {
+		return nil, errors.New("missing txs")
+	}
+
+	var txs types.Transactions
+	for _, encodedTx := range rawTxs {
+		tx := new(types.Transaction)
+		if err := tx.UnmarshalBinary(encodedTx); err != nil {
+			return nil, err
+		}
+		txs = append(txs, tx)
+	}
+
+	timeoutMilliSeconds := int64(5000)
+	timeout := time.Millisecond * time.Duration(timeoutMilliSeconds)
+
+	state, parent, err := s.b.StateAndHeaderByNumberOrHash(ctx, StateBlockNumberOrHash)
+	if state == nil || err != nil {
+		return nil, err
+	}
+
+	blockNumber := big.NewInt(parent.Number.Int64() + 1)
+	coinbase := parent.Coinbase
+
+	var baseFee *big.Int
+	if s.b.ChainConfig().IsLondon(blockNumber) {
+		baseFee = misc.CalcBaseFee(s.b.ChainConfig(), parent)
+	}
+
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Number:     blockNumber,
+		GasLimit:   parent.GasLimit,
+		Time:       parent.Time + 1,
+		Difficulty: parent.Difficulty,
+		Coinbase:   coinbase,
+		BaseFee:    baseFee,
+	}
+
+	// Setup context so it may be cancelled the call has completed
+	// or, in case of unmetered gas, setup a context with a timeout.
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	// Make sure the context is cancelled when the call has completed
+	// this makes sure resources are cleaned up.
+	defer cancel()
+
+	vmconfig := vm.Config{}
+
+	// Setup the gas pool (also for unmetered requests)
+	// and apply the message.
+	gp := new(core.GasPool).AddGas(math.MaxUint64)
+
+	for i := 0; i < len(txs)-1; i++ {
+		state.Prepare(txs[i].Hash(), i)
+		_, _, err := core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, txs[i], &header.GasUsed, vmconfig)
+		if err != nil {
+			return nil, fmt.Errorf("err1: %w; txhash %s", err, txs[i].Hash())
+		}
+	}
+
+	lastTx := txs[len(txs)-1]
+	acl, gasUsed, vmerr, err := AccessListLastTx(ctx, s.b, header, lastTx, state)
+	if err != nil {
+		return nil, err
+	}
+	result := &accessListResult{Accesslist: &acl, GasUsed: hexutil.Uint64(gasUsed)}
+	if vmerr != nil {
+		result.Error = vmerr.Error()
+	}
+	return result, nil
+}
