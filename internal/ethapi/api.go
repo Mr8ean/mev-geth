@@ -1880,8 +1880,8 @@ func (s *PublicTransactionPoolAPI) GetTransactionsByHashList(ctx context.Context
 				return nil, err
 			}
 			rpcTx = newRPCTransaction(tx, blockHash, blockNumber, txIndex, header.BaseFee)
-		} else if tx := s.b.GetPoolTransaction(hash); tx != nil { // No finalized transaction, try to retrieve it from the pool
-			rpcTx = newRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig())
+			// } else if tx := s.b.GetPoolTransaction(hash); tx != nil { // No finalized transaction, try to retrieve it from the pool
+			// 	rpcTx = newRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig())
 		} else {
 			continue
 		}
