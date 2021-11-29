@@ -1842,15 +1842,76 @@ func (s *PublicTransactionPoolAPI) GetTransactionByHash(ctx context.Context, has
 	return nil, nil
 }
 
+type ExtendedRPCTransaction struct {
+	BlockHash        *common.Hash      `json:"blockHash"`
+	BlockNumber      *hexutil.Big      `json:"blockNumber"`
+	From             common.Address    `json:"from"`
+	Gas              hexutil.Uint64    `json:"gas"`
+	GasPrice         *hexutil.Big      `json:"gasPrice"`
+	GasFeeCap        *hexutil.Big      `json:"maxFeePerGas,omitempty"`
+	GasTipCap        *hexutil.Big      `json:"maxPriorityFeePerGas,omitempty"`
+	Hash             common.Hash       `json:"hash"`
+	Input            hexutil.Bytes     `json:"input"`
+	Nonce            hexutil.Uint64    `json:"nonce"`
+	To               *common.Address   `json:"to"`
+	TransactionIndex *hexutil.Uint64   `json:"transactionIndex"`
+	Value            *hexutil.Big      `json:"value"`
+	Type             hexutil.Uint64    `json:"type"`
+	Accesses         *types.AccessList `json:"accessList,omitempty"`
+	ChainID          *hexutil.Big      `json:"chainId,omitempty"`
+	V                *hexutil.Big      `json:"v"`
+	R                *hexutil.Big      `json:"r"`
+	S                *hexutil.Big      `json:"s"`
+	RawTransaction   hexutil.Bytes     `json:"rawTransaction,omitempty"`
+}
+
 // GetTransactionsByHashList returns list of transactions for the given list of hashes
-func (s *PublicTransactionPoolAPI) GetTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*RPCTransaction, error) {
-	txs := make([]*RPCTransaction, len(hashes))
+func (s *PublicTransactionPoolAPI) GetTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*ExtendedRPCTransaction, error) {
+	txs := make([]*ExtendedRPCTransaction, len(hashes))
 	for index, hash := range hashes {
-		tx, err := s.GetTransactionByHash(ctx, hash)
+		var rpcTx *RPCTransaction
+		tx, blockHash, blockNumber, txIndex, err := s.b.GetTransaction(ctx, hash)
 		if err != nil {
 			return nil, err
 		}
-		txs[index] = tx
+		if tx != nil {
+			header, err := s.b.HeaderByHash(ctx, blockHash)
+			if err != nil {
+				return nil, err
+			}
+			rpcTx = newRPCTransaction(tx, blockHash, blockNumber, txIndex, header.BaseFee)
+		} else if tx := s.b.GetPoolTransaction(hash); tx != nil { // No finalized transaction, try to retrieve it from the pool
+			rpcTx = newRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig())
+		} else {
+			continue
+		}
+
+		txs[index] = &ExtendedRPCTransaction{
+			BlockHash:        rpcTx.BlockHash,
+			BlockNumber:      rpcTx.BlockNumber,
+			From:             rpcTx.From,
+			Gas:              rpcTx.Gas,
+			GasPrice:         rpcTx.GasPrice,
+			GasFeeCap:        rpcTx.GasFeeCap,
+			GasTipCap:        rpcTx.GasTipCap,
+			Hash:             rpcTx.Hash,
+			Input:            rpcTx.Input,
+			Nonce:            rpcTx.Nonce,
+			To:               rpcTx.To,
+			TransactionIndex: rpcTx.TransactionIndex,
+			Value:            rpcTx.Value,
+			Type:             rpcTx.Type,
+			Accesses:         rpcTx.Accesses,
+			ChainID:          rpcTx.ChainID,
+			V:                rpcTx.V,
+			R:                rpcTx.R,
+			S:                rpcTx.S,
+		}
+		raw, err := tx.MarshalBinary()
+		if err != nil {
+			txs[index].RawTransaction = raw
+		}
+
 	}
 	return txs, nil
 }
