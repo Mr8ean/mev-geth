@@ -1906,10 +1906,10 @@ func (s *PublicTransactionPoolAPI) GetPendingTransactionsByHashList(ctx context.
 				R:                rpcTx.R,
 				S:                rpcTx.S,
 			}
-			// raw, err := tx.MarshalBinary()
-			// if err != nil {
-			// 	txs[index].RawTransaction = raw
-			// }
+			raw, err := tx.MarshalBinary()
+			if err != nil {
+				txs[index].RawTransaction = raw
+			}
 		}
 	}
 	return txs, nil
