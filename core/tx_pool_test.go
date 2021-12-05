@@ -2541,7 +2541,6 @@ func BenchmarkInsertRemoteWithAllLocals(b *testing.B) {
 	}
 }
 
-// Benchmarks the speed of batch transaction insertion in case of multiple accounts.
 func BenchmarkPoolMultiAccountBatchInsert(b *testing.B) {
 	// Generate a batch of transactions to enqueue into the pool
 	pool, _ := setupTxPool()
@@ -2563,8 +2562,6 @@ func BenchmarkPoolMultiAccountBatchInsert(b *testing.B) {
 }
 
 func checkBundles(t *testing.T, pool *TxPool, block int64, timestamp uint64, expectedRes int, expectedRemaining int) {
-	res, _ := pool.MevBundles(big.NewInt(block), timestamp)
-	if len(res) != expectedRes {
 		t.Fatalf("expected returned bundles did not match got %d, expected %d", len(res), expectedRes)
 	}
 	if len(pool.mevBundles) != expectedRemaining {
