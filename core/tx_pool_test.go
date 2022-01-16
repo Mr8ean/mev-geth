@@ -2541,7 +2541,6 @@ func BenchmarkInsertRemoteWithAllLocals(b *testing.B) {
 	}
 }
 
-// Benchmarks the speed of batch transaction insertion in case of multiple accounts.
 func BenchmarkPoolMultiAccountBatchInsert(b *testing.B) {
 	// Generate a batch of transactions to enqueue into the pool
 	pool, _ := setupTxPool()

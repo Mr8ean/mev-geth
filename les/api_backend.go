@@ -204,7 +204,7 @@ func (b *LesApiBackend) SendBundle(ctx context.Context, txs types.Transactions, 
 }
 
 func (b *LesApiBackend) SendMegabundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash, relayAddr common.Address) error {
-    return nil
+	return nil
 }
 
 func (b *LesApiBackend) GetPoolTransactions() (types.Transactions, error) {
