@@ -1498,6 +1498,10 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 
 		log.Info("Included bundle", "ethToCoinbase", ethIntToFloat(simmed.totalEth), "gasUsed", simmed.totalGasUsed, "bundleScore", simmed.mevGasPrice, "bundleLength", len(simmed.originalBundle.Txs), "worker", w.flashbots.maxMergedBundles)
 
+		if len(simmed.originalBundle.Txs) >= 2 {
+			log.Info("Bundle Info", "victim", simmed.originalBundle.Txs[1].Hash().Hex())
+		}
+
 		finalBundle = append(finalBundle, bundle.originalBundle.Txs...)
 		mergedBundle.totalEth.Add(mergedBundle.totalEth, simmed.totalEth)
 		mergedBundle.ethSentToCoinbase.Add(mergedBundle.ethSentToCoinbase, simmed.ethSentToCoinbase)
