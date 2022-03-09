@@ -2688,7 +2688,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			"from":             from.String(),
 			"to":               to,
 			"transactionIndex": receipt.TransactionIndex,
-			"gasPrice":         tx.GasPrice(),
+			"baseFee":          header.BaseFee.String(),
 			"gasLimit":         tx.Gas(), // not sure this is min...
 			"nonce":            tx.Nonce(),
 			"value":            tx.Value(),
