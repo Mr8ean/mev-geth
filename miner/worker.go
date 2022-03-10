@@ -1494,14 +1494,19 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 			currentState = prevState
 			gasPool = prevGasPool
 
-			if err != nil {
-				log.Info("Not included", "err", err.Error())
-			} else if len(simmed.originalBundle.Txs) >= 2 {
+			if len(simmed.originalBundle.Txs) >= 2 {
 				victimTx := simmed.originalBundle.Txs[1]
 				from, _ := types.Sender(env.signer, victimTx)
 				startTx := simmed.originalBundle.Txs[0]
 				startFrom, _ := types.Sender(env.signer, startTx)
-				log.Info("Not included", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(), "startFrom", startFrom)
+
+				var errMsg string
+				if err != nil {
+					errMsg = err.Error()
+				} else {
+					errMsg = "no err"
+				}
+				log.Info("Not included", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(), "startFrom", startFrom, "err", errMsg, "worker", w.flashbots.maxMergedBundles)
 			}
 
 			continue
@@ -1597,12 +1602,21 @@ func (w *worker) computeBundleGas(env *environment, bundle types.MevBundle, stat
 		state.Prepare(tx.Hash(), i+currentTxCount)
 		coinbaseBalanceBefore := state.GetBalance(env.coinbase)
 
-		receipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &env.coinbase, gasPool, state, env.header, tx, &tempGasUsed, *w.chain.GetVMConfig())
+		receipt, result, err := core.ApplyTransactionWithResult(w.chainConfig, w.chain, &env.coinbase, gasPool, state, env.header, tx, &tempGasUsed, *w.chain.GetVMConfig())
 		if err != nil {
 			return simulatedBundle{}, err
 		}
+		errMsg := "failed tx"
 		if receipt.Status == types.ReceiptStatusFailed && !containsHash(bundle.RevertingTxHashes, receipt.TxHash) {
-			return simulatedBundle{}, errors.New("failed tx")
+			if result.Err != nil {
+				errMsg += ": " + result.Err.Error()
+				// jsonResult["error"] = result.Err.Error()
+				revert := result.Revert()
+				if len(revert) > 0 {
+					errMsg += "; revert: " + string(revert)
+				}
+			}
+			return simulatedBundle{}, errors.New(errMsg)
 		}
 
 		totalGasUsed += receipt.GasUsed
