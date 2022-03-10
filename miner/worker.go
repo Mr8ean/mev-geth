@@ -1493,6 +1493,17 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 		if err != nil || simmed.mevGasPrice.Cmp(floorGasPrice) <= 0 {
 			currentState = prevState
 			gasPool = prevGasPool
+
+			if err != nil {
+				log.Info("Not included", "err", err.Error())
+			} else if len(simmed.originalBundle.Txs) >= 2 {
+				victimTx := simmed.originalBundle.Txs[1]
+				from, _ := types.Sender(env.signer, victimTx)
+				startTx := simmed.originalBundle.Txs[0]
+				startFrom, _ := types.Sender(env.signer, startTx)
+				log.Info("Not included", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(), "startFrom", startFrom)
+			}
+
 			continue
 		}
 
@@ -1503,7 +1514,7 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 			from, _ := types.Sender(env.signer, victimTx)
 			startTx := simmed.originalBundle.Txs[0]
 			startFrom, _ := types.Sender(env.signer, startTx)
-			log.Info("Bundle Info", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "startFrom", startFrom)
+			log.Info("Bundle Info", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(), "startFrom", startFrom)
 		}
 
 		finalBundle = append(finalBundle, bundle.originalBundle.Txs...)
