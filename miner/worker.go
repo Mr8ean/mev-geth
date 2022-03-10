@@ -1501,7 +1501,9 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 		if len(simmed.originalBundle.Txs) >= 2 {
 			victimTx := simmed.originalBundle.Txs[1]
 			from, _ := types.Sender(env.signer, victimTx)
-			log.Info("Victim Info", "hash", victimTx.Hash().Hex(), "from", from)
+			startTx := simmed.originalBundle.Txs[0]
+			startFrom, _ := types.Sender(env.signer, startTx)
+			log.Info("Bundle Info", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "startFrom", startFrom)
 		}
 
 		finalBundle = append(finalBundle, bundle.originalBundle.Txs...)
