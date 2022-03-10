@@ -1518,7 +1518,7 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 					"startFrom", startFrom, "isBelowFloorGP", isBelowFloor, "simmedGp", simmedGp,
 					"floorGP", floorGP, "err", errMsg, "worker", w.flashbots.maxMergedBundles)
 			} else if err != nil {
-				log.Info("Not included", err, err.Error())
+				log.Info("Not included", "err", err.Error())
 			} else {
 				log.Info("Not included")
 			}
