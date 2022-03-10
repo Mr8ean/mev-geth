@@ -1490,7 +1490,8 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 		floorGasPrice = floorGasPrice.Div(floorGasPrice, big.NewInt(100))
 
 		simmed, err := w.computeBundleGas(env, bundle.originalBundle, currentState, gasPool, pendingTxs, len(finalBundle))
-		if err != nil || simmed.mevGasPrice.Cmp(floorGasPrice) <= 0 {
+		isBelowFloor := simmed.mevGasPrice.Cmp(floorGasPrice) <= 0
+		if err != nil || isBelowFloor {
 			currentState = prevState
 			gasPool = prevGasPool
 
@@ -1506,7 +1507,7 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 				} else {
 					errMsg = "no err"
 				}
-				log.Info("Not included", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(), "startFrom", startFrom, "err", errMsg, "worker", w.flashbots.maxMergedBundles)
+				log.Info("Not included", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(), "startFrom", startFrom, "isBelowFloorGP", isBelowFloor, "err", errMsg, "worker", w.flashbots.maxMergedBundles)
 			}
 
 			continue
