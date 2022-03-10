@@ -1490,8 +1490,7 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 		floorGasPrice = floorGasPrice.Div(floorGasPrice, big.NewInt(100))
 
 		simmed, err := w.computeBundleGas(env, bundle.originalBundle, currentState, gasPool, pendingTxs, len(finalBundle))
-		isBelowFloor := simmed.mevGasPrice.Cmp(floorGasPrice) <= 0
-		if err != nil || isBelowFloor {
+		if err != nil || simmed.mevGasPrice.Cmp(floorGasPrice) <= 0 {
 			currentState = prevState
 			gasPool = prevGasPool
 
@@ -1501,15 +1500,27 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 				startTx := simmed.originalBundle.Txs[0]
 				startFrom, _ := types.Sender(env.signer, startTx)
 
+				isBelowFloor := false
+				floorGP := "0"
+				simmedGp := "0"
+
 				var errMsg string
 				if err != nil {
 					errMsg = err.Error()
+					isBelowFloor = simmed.mevGasPrice.Cmp(floorGasPrice) <= 0
+					floorGP = floorGasPrice.String()
+					simmedGp = simmed.mevGasPrice.String()
 				} else {
 					errMsg = "no err"
 				}
+
 				log.Info("Not included", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(),
-					"startFrom", startFrom, "isBelowFloorGP", isBelowFloor, "simmedGp", simmed.mevGasPrice.String(),
-					"floorGP", floorGasPrice.String(), "err", errMsg, "worker", w.flashbots.maxMergedBundles)
+					"startFrom", startFrom, "isBelowFloorGP", isBelowFloor, "simmedGp", simmedGp,
+					"floorGP", floorGP, "err", errMsg, "worker", w.flashbots.maxMergedBundles)
+			} else if err != nil {
+				log.Info("Not included", err, err.Error())
+			} else {
+				log.Info("Not included")
 			}
 
 			continue
