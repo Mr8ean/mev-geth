@@ -1507,7 +1507,9 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 				} else {
 					errMsg = "no err"
 				}
-				log.Info("Not included", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(), "startFrom", startFrom, "isBelowFloorGP", isBelowFloor, "err", errMsg, "worker", w.flashbots.maxMergedBundles)
+				log.Info("Not included", "victimHash", victimTx.Hash().Hex(), "victimFrom", from, "victimTo", victimTx.To().Hex(),
+					"startFrom", startFrom, "isBelowFloorGP", isBelowFloor, "simmedGp", simmed.mevGasPrice.String(),
+					"floorGP", floorGasPrice.String(), "err", errMsg, "worker", w.flashbots.maxMergedBundles)
 			}
 
 			continue
