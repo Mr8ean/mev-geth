@@ -1469,7 +1469,7 @@ func (w *worker) generateFlashbotsBundle(env *environment, bundles []types.MevBu
 			victimTx := simBundles.originalBundle.Txs[1]
 			startTx := simBundles.originalBundle.Txs[0]
 			startFrom, _ := types.Sender(env.signer, startTx)
-			log.Info("Flashbots bundle 1st sim", "victimHash", victimTx.Hash().Hex(), "startFrom", startFrom, "bundleScore", simBundles.mevGasPrice.String(), "gasUsed", simBundles.totalGasUsed, "worker", w.flashbots.maxMergedBundles, "bundleNum", idx)
+			log.Info("Flashbots bundle 1st sim", "ethToCoinbase", ethIntToFloat(simBundles.totalEth), "victimHash", victimTx.Hash().Hex(), "startFrom", startFrom, "bundleScore", simBundles.mevGasPrice.String(), "gasUsed", simBundles.totalGasUsed, "worker", w.flashbots.maxMergedBundles, "bundleNum", idx)
 		}
 	}
 
