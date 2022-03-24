@@ -1268,7 +1268,7 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment) {
 			log.Error("Failed to generate flashbots bundle", "err", err)
 			return
 		}
-		if len(bundleTxs) > 2 {
+		if len(bundleTxs) >= 2 {
 			log.Info("Flashbots bundle 2nd sim", "victimHash", bundleTxs[1].Hash().Hex(), "ethToCoinbase", ethIntToFloat(bundle.totalEth), "gasUsed", bundle.totalGasUsed, "bundleScore", bundle.mevGasPrice, "bundleLength", len(bundleTxs), "numBundles", numBundles, "worker", w.flashbots.maxMergedBundles)
 		} else {
 			log.Info("Flashbots bundle 2nd sim", "ethToCoinbase", ethIntToFloat(bundle.totalEth), "gasUsed", bundle.totalGasUsed, "bundleScore", bundle.mevGasPrice, "bundleLength", len(bundleTxs), "numBundles", numBundles, "worker", w.flashbots.maxMergedBundles)
@@ -1465,7 +1465,7 @@ func (w *worker) generateFlashbotsBundle(env *environment, bundles []types.MevBu
 	}
 
 	for idx, simBundles := range simulatedBundles {
-		if len(simBundles.originalBundle.Txs) > 2 {
+		if len(simBundles.originalBundle.Txs) > 1 {
 			victimTx := simBundles.originalBundle.Txs[1]
 			startTx := simBundles.originalBundle.Txs[0]
 			startFrom, _ := types.Sender(env.signer, startTx)
