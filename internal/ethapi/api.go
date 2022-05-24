@@ -1858,6 +1858,66 @@ func (s *PublicTransactionPoolAPI) GetTransactionsByHashList(ctx context.Context
 	return txs, nil
 }
 
+type ExtendedRPCTransaction struct {
+	BlockHash        *common.Hash      `json:"blockHash"`
+	BlockNumber      *hexutil.Big      `json:"blockNumber"`
+	From             common.Address    `json:"from"`
+	Gas              hexutil.Uint64    `json:"gas"`
+	GasPrice         *hexutil.Big      `json:"gasPrice"`
+	GasFeeCap        *hexutil.Big      `json:"maxFeePerGas,omitempty"`
+	GasTipCap        *hexutil.Big      `json:"maxPriorityFeePerGas,omitempty"`
+	Hash             common.Hash       `json:"hash"`
+	Input            hexutil.Bytes     `json:"input"`
+	Nonce            hexutil.Uint64    `json:"nonce"`
+	To               *common.Address   `json:"to"`
+	TransactionIndex *hexutil.Uint64   `json:"transactionIndex"`
+	Value            *hexutil.Big      `json:"value"`
+	Type             hexutil.Uint64    `json:"type"`
+	Accesses         *types.AccessList `json:"accessList,omitempty"`
+	ChainID          *hexutil.Big      `json:"chainId,omitempty"`
+	V                *hexutil.Big      `json:"v"`
+	R                *hexutil.Big      `json:"r"`
+	S                *hexutil.Big      `json:"s"`
+	RawTransaction   hexutil.Bytes     `json:"rawTransaction,omitempty"`
+}
+
+// GetTransactionsByHashList returns list of pending transactions for the given list of hashes
+func (s *PublicTransactionPoolAPI) GetPendingTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*ExtendedRPCTransaction, error) {
+	txs := make([]*ExtendedRPCTransaction, len(hashes))
+	for index, hash := range hashes {
+		tx := s.b.GetPoolTransaction(hash)
+		if tx != nil {
+			rpcTx := newRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig())
+			txs[index] = &ExtendedRPCTransaction{
+				BlockHash:        rpcTx.BlockHash,
+				BlockNumber:      rpcTx.BlockNumber,
+				From:             rpcTx.From,
+				Gas:              rpcTx.Gas,
+				GasPrice:         rpcTx.GasPrice,
+				GasFeeCap:        rpcTx.GasFeeCap,
+				GasTipCap:        rpcTx.GasTipCap,
+				Hash:             rpcTx.Hash,
+				Input:            rpcTx.Input,
+				Nonce:            rpcTx.Nonce,
+				To:               rpcTx.To,
+				TransactionIndex: rpcTx.TransactionIndex,
+				Value:            rpcTx.Value,
+				Type:             rpcTx.Type,
+				Accesses:         rpcTx.Accesses,
+				ChainID:          rpcTx.ChainID,
+				V:                rpcTx.V,
+				R:                rpcTx.R,
+				S:                rpcTx.S,
+			}
+			raw, err := tx.MarshalBinary()
+			if err != nil {
+				txs[index].RawTransaction = raw
+			}
+		}
+	}
+	return txs, nil
+}
+
 // GetRawTransactionByHash returns the bytes of the transaction for the given hash.
 func (s *PublicTransactionPoolAPI) GetRawTransactionByHash(ctx context.Context, hash common.Hash) (hexutil.Bytes, error) {
 	// Retrieve a finalized transaction, or a pooled otherwise
