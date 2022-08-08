@@ -2536,6 +2536,7 @@ type MyLog struct {
 // SendBundleArgs represents the arguments for a call.
 type CallBundleArgs struct {
 	Txs                    []hexutil.Bytes       `json:"txs"`
+	IncreaseGasLimit       []*uint64             `json:"increaseGasLimit"`
 	AccountsToGetBalance   []common.Address      `json:"accountsToGetBalance"`
 	BlockNumber            rpc.BlockNumber       `json:"blockNumber"`
 	StateBlockNumberOrHash rpc.BlockNumberOrHash `json:"stateBlockNumber"`
@@ -2558,14 +2559,65 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		return nil, errors.New("bundle missing txs")
 	}
 
+	state, parent, err := s.b.StateAndHeaderByNumberOrHash(ctx, args.StateBlockNumberOrHash)
+	if state == nil || err != nil {
+		return nil, err
+	}
+	if err := overrides.Apply(state); err != nil {
+		return nil, err
+	}
+
+	var blockNumber *big.Int
+	if args.BlockNumber == 0 {
+		blockNumber = big.NewInt(parent.Number.Int64() + 1)
+	} else {
+		blockNumber = big.NewInt(int64(args.BlockNumber))
+	}
+
+	signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
+
 	var txs types.Transactions
 
-	for _, encodedTx := range args.Txs {
+	for i, encodedTx := range args.Txs {
 		tx := new(types.Transaction)
 		if err := tx.UnmarshalBinary(encodedTx); err != nil {
 			return nil, err
 		}
+		if len(args.IncreaseGasLimit) > i {
+			if args.IncreaseGasLimit[i] != nil {
+				from, err := types.Sender(signer, tx)
+				if err != nil {
+					return nil, fmt.Errorf("errInc: %w; txhash %s", err, tx.Hash())
+				}
+
+				// make sure we dont surpass the max gas limit
+				increaseGasLimit := new(big.Int).SetUint64(*args.IncreaseGasLimit[i])
+				accBalance := state.GetBalance(from)
+				maxGasLimit := new(big.Int).Div(accBalance, tx.GasFeeCap())
+				if maxGasLimit.Cmp(increaseGasLimit) < 0 {
+					increaseGasLimit = maxGasLimit
+				}
+				_increaseGasLimit := increaseGasLimit.Uint64()
+
+				data := hexutil.Bytes(tx.Data())
+				acc := tx.AccessList()
+				args := TransactionArgs{
+					From:                 &from,
+					To:                   tx.To(),
+					Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
+					GasPrice:             (*hexutil.Big)(tx.GasPrice()),
+					Value:                (*hexutil.Big)(tx.Value()),
+					Data:                 &data,
+					AccessList:           &acc,
+					MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
+					MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
+					ChainID:              (*hexutil.Big)(tx.ChainId()),
+				}
+				tx = args.ToTransaction()
+			}
+		}
 		txs = append(txs, tx)
+
 	}
 	defer func(start time.Time) { log.Debug("Executing EVM call finished", "runtime", time.Since(start)) }(time.Now())
 
@@ -2574,19 +2626,6 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		timeoutMilliSeconds = *args.Timeout
 	}
 	timeout := time.Millisecond * time.Duration(timeoutMilliSeconds)
-	state, parent, err := s.b.StateAndHeaderByNumberOrHash(ctx, args.StateBlockNumberOrHash)
-	if state == nil || err != nil {
-		return nil, err
-	}
-	if err := overrides.Apply(state); err != nil {
-		return nil, err
-	}
-	var blockNumber *big.Int
-	if args.BlockNumber == 0 {
-		blockNumber = big.NewInt(parent.Number.Int64() + 1)
-	} else {
-		blockNumber = big.NewInt(int64(args.BlockNumber))
-	}
 
 	timestamp := parent.Time + 1
 	if args.Timestamp != nil {
@@ -2643,7 +2682,6 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 
 	logsStartIndex := 0
 	// bundleHash := sha3.NewLegacyKeccak256()
-	signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
 	var totalGasUsed uint64
 	gasFees := new(big.Int)
 	for i, tx := range txs {
@@ -2691,6 +2729,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			"value":            tx.Value(),
 			"logs":             thisTxMyLogs,
 			"input":            hexutil.Bytes(tx.Data()),
+			"gasRefund":        result.GasRefund,
 		}
 		totalGasUsed += receipt.GasUsed
 		gasPrice, err := tx.EffectiveGasTip(header.BaseFee)
