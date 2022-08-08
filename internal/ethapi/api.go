@@ -2577,49 +2577,47 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
 
 	var txs types.Transactions
+	txArgs := make([]TransactionArgs, len(args.Txs))
 
 	for i, encodedTx := range args.Txs {
 		tx := new(types.Transaction)
 		if err := tx.UnmarshalBinary(encodedTx); err != nil {
 			return nil, err
 		}
-		if len(args.IncreaseGasLimit) > i {
-			if args.IncreaseGasLimit[i] != nil {
-				from, err := types.Sender(signer, tx)
-				if err != nil {
-					return nil, fmt.Errorf("errInc: %w; txhash %s", err, tx.Hash())
-				}
-
-				// make sure we dont surpass the max gas limit
-				increaseGasLimit := new(big.Int).SetUint64(*args.IncreaseGasLimit[i])
-				accBalance := state.GetBalance(from)
-				maxGasLimit := new(big.Int).Div(accBalance, tx.GasFeeCap())
-				if maxGasLimit.Cmp(increaseGasLimit) < 0 {
-					increaseGasLimit = maxGasLimit
-				}
-				_increaseGasLimit := increaseGasLimit.Uint64()
-
-				data := hexutil.Bytes(tx.Data())
-				acc := tx.AccessList()
-				nonce := tx.Nonce()
-				txArgs := TransactionArgs{
-					From:                 &from,
-					To:                   tx.To(),
-					Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
-					GasPrice:             (*hexutil.Big)(tx.GasPrice()),
-					Value:                (*hexutil.Big)(tx.Value()),
-					Data:                 &data,
-					AccessList:           &acc,
-					MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
-					MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
-					ChainID:              (*hexutil.Big)(tx.ChainId()),
-					Nonce:                (*hexutil.Uint64)(&nonce),
-				}
-				tx = txArgs.ToTransaction()
+		if len(args.IncreaseGasLimit) > i && args.IncreaseGasLimit[i] != nil {
+			from, err := types.Sender(signer, tx)
+			if err != nil {
+				return nil, fmt.Errorf("errInc: %w; txhash %s", err, tx.Hash())
 			}
+
+			// make sure we dont surpass the max gas limit
+			increaseGasLimit := new(big.Int).SetUint64(*args.IncreaseGasLimit[i])
+			accBalance := state.GetBalance(from)
+			maxGasLimit := new(big.Int).Div(accBalance, tx.GasFeeCap())
+			if maxGasLimit.Cmp(increaseGasLimit) < 0 {
+				increaseGasLimit = maxGasLimit
+			}
+			_increaseGasLimit := increaseGasLimit.Uint64()
+
+			data := hexutil.Bytes(tx.Data())
+			acc := tx.AccessList()
+			nonce := tx.Nonce()
+			txArgs[i] = TransactionArgs{
+				From:                 &from,
+				To:                   tx.To(),
+				Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
+				GasPrice:             (*hexutil.Big)(tx.GasPrice()),
+				Value:                (*hexutil.Big)(tx.Value()),
+				Data:                 &data,
+				AccessList:           &acc,
+				MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
+				MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
+				ChainID:              (*hexutil.Big)(tx.ChainId()),
+				Nonce:                (*hexutil.Uint64)(&nonce),
+			}
+			tx = txArgs[i].ToTransaction()
 		}
 		txs = append(txs, tx)
-
 	}
 	defer func(start time.Time) { log.Debug("Executing EVM call finished", "runtime", time.Since(start)) }(time.Now())
 
@@ -2690,7 +2688,17 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		coinbaseBalanceBeforeTx := state.GetBalance(coinbase)
 		state.Prepare(tx.Hash(), i)
 
-		receipt, result, err := core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &header.GasUsed, vmconfig)
+		var receipt *types.Receipt
+		var result *core.ExecutionResult
+		var err error
+		if len(args.IncreaseGasLimit) > i && args.IncreaseGasLimit[i] != nil {
+			var msg types.Message
+			msg, err = txArgs[i].ToMessage(0, header.BaseFee)
+			receipt, result, err = core.ApplyTransactionArgsWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &msg, &header.GasUsed, vmconfig)
+		} else {
+			receipt, result, err = core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &header.GasUsed, vmconfig)
+		}
+
 		if err != nil {
 			return nil, fmt.Errorf("err1: %w; txhash %s", err, tx.Hash())
 		}
