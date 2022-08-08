@@ -2601,7 +2601,8 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 
 				data := hexutil.Bytes(tx.Data())
 				acc := tx.AccessList()
-				args := TransactionArgs{
+				nonce := tx.Nonce()
+				txArgs := TransactionArgs{
 					From:                 &from,
 					To:                   tx.To(),
 					Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
@@ -2612,8 +2613,9 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 					MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
 					MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
 					ChainID:              (*hexutil.Big)(tx.ChainId()),
+					Nonce:                (*hexutil.Uint64)(&nonce),
 				}
-				tx = args.ToTransaction()
+				tx = txArgs.ToTransaction()
 			}
 		}
 		txs = append(txs, tx)
