@@ -2638,7 +2638,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
 
 	var txs types.Transactions
-	txArgs := make([]TransactionArgs, len(args.Txs))
+	txArgs := make([]*TransactionArgs, len(args.Txs))
 
 	for i, encodedTx := range args.Txs {
 		tx := new(types.Transaction)
@@ -2663,19 +2663,34 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			data := hexutil.Bytes(tx.Data())
 			acc := tx.AccessList()
 			nonce := tx.Nonce()
-			txArgs[i] = TransactionArgs{
-				From:                 &from,
-				To:                   tx.To(),
-				Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
-				GasPrice:             (*hexutil.Big)(tx.GasPrice()),
-				Value:                (*hexutil.Big)(tx.Value()),
-				Data:                 &data,
-				AccessList:           &acc,
-				MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
-				MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
-				ChainID:              (*hexutil.Big)(tx.ChainId()),
-				Nonce:                (*hexutil.Uint64)(&nonce),
+
+			if tx.GasFeeCap() != nil {
+				txArgs[i] = &TransactionArgs{
+					From:                 &from,
+					To:                   tx.To(),
+					Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
+					Value:                (*hexutil.Big)(tx.Value()),
+					Data:                 &data,
+					AccessList:           &acc,
+					MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
+					MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
+					ChainID:              (*hexutil.Big)(tx.ChainId()),
+					Nonce:                (*hexutil.Uint64)(&nonce),
+				}
+			} else {
+				txArgs[i] = &TransactionArgs{
+					From:       &from,
+					To:         tx.To(),
+					Gas:        (*hexutil.Uint64)(&_increaseGasLimit),
+					GasPrice:   (*hexutil.Big)(tx.GasPrice()),
+					Value:      (*hexutil.Big)(tx.Value()),
+					Data:       &data,
+					AccessList: &acc,
+					ChainID:    (*hexutil.Big)(tx.ChainId()),
+					Nonce:      (*hexutil.Uint64)(&nonce),
+				}
 			}
+
 			tx = txArgs[i].ToTransaction()
 		}
 		txs = append(txs, tx)
@@ -2763,6 +2778,9 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		if len(args.IncreaseGasLimit) > i && args.IncreaseGasLimit[i] != nil {
 			var msg types.Message
 			msg, err = txArgs[i].ToMessage(0, header.BaseFee)
+			if err != nil {
+				return nil, fmt.Errorf("errToMsg: %w; txhash %s", err, tx.Hash())
+			}
 			receipt, result, err = core.ApplyTransactionArgsWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &msg, &header.GasUsed, vmconfig)
 		} else {
 			receipt, result, err = core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &header.GasUsed, vmconfig)
