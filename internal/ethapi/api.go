@@ -2593,7 +2593,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			// make sure we dont surpass the max gas limit
 			increaseGasLimit := new(big.Int).SetUint64(*args.IncreaseGasLimit[i])
 			accBalance := state.GetBalance(from)
-			maxGasLimit := new(big.Int).Div(accBalance, tx.GasFeeCap())
+			maxGasLimit := new(big.Int).Div(new(big.Int).Sub(accBalance, tx.Value()), tx.GasFeeCap())
 			if maxGasLimit.Cmp(increaseGasLimit) < 0 {
 				increaseGasLimit = maxGasLimit
 			}
