@@ -1384,7 +1384,7 @@ func (s *BlockChainAPI) EstimateGas(ctx context.Context, args TransactionArgs, b
 
 // EstimateGasListRawTxs returns an estimate of the amount of gas needed to execute list of
 // given raw transactions against the current pending block.
-func (s *PublicBlockChainAPI) EstimateGasListRawTxs(ctx context.Context, encodedTxList []hexutil.Bytes, overrides *StateOverride) ([]hexutil.Uint64, error) {
+func (s *BlockChainAPI) EstimateGasListRawTxs(ctx context.Context, encodedTxList []hexutil.Bytes, overrides *StateOverride) ([]hexutil.Uint64, error) {
 
 	blockNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
 	var (
@@ -1880,7 +1880,7 @@ func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.H
 }
 
 // GetTransactionsByHashList returns list of transactions for the given list of hashes
-func (s *PublicTransactionPoolAPI) GetTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*RPCTransaction, error) {
+func (s *TransactionAPI) GetTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*RPCTransaction, error) {
 	txs := make([]*RPCTransaction, len(hashes))
 	for index, hash := range hashes {
 		tx, err := s.GetTransactionByHash(ctx, hash)
