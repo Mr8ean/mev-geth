@@ -1916,7 +1916,7 @@ type ExtendedRPCTransaction struct {
 }
 
 // GetTransactionsByHashList returns list of pending transactions for the given list of hashes
-func (s *PublicTransactionPoolAPI) GetPendingTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*ExtendedRPCTransaction, error) {
+func (s *TransactionAPI) GetPendingTransactionsByHashList(ctx context.Context, hashes []common.Hash) ([]*ExtendedRPCTransaction, error) {
 	txs := make([]*ExtendedRPCTransaction, len(hashes))
 	for index, hash := range hashes {
 		tx := s.b.GetPoolTransaction(hash)
