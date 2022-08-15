@@ -2766,6 +2766,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		var receipt *types.Receipt
 		var result *core.ExecutionResult
 		var err error
+		var from common.Address
 		if len(args.IncreaseGasLimit) > i && args.IncreaseGasLimit[i] != nil {
 			var msg types.Message
 			msg, err = txArgs[i].ToMessage(0, header.BaseFee)
@@ -2773,12 +2774,13 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 				return nil, fmt.Errorf("errToMsg: %w; txhash %s", err, tx.Hash())
 			}
 			receipt, result, err = core.ApplyTransactionArgsWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &msg, &header.GasUsed, vmconfig)
+			from = *txArgs[i].From
 		} else {
+			from, err = types.Sender(signer, tx)
+			if err != nil {
+				return nil, fmt.Errorf("err2: %w; txhash %s", err, tx.Hash())
+			}
 			receipt, result, err = core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &header.GasUsed, vmconfig)
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("err1: %w; txhash %s", err, tx.Hash())
 		}
 
 		logs := state.Logs()
@@ -2796,10 +2798,6 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		logsStartIndex = len(logs)
 
 		txHash := tx.Hash().String()
-		from, err := types.Sender(signer, tx)
-		if err != nil {
-			return nil, fmt.Errorf("err2: %w; txhash %s", err, tx.Hash())
-		}
 		to := "0x"
 		if tx.To() != nil {
 			to = tx.To().String()
