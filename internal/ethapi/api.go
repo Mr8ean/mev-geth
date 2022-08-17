@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"math/big"
 	"strings"
 	"time"
@@ -734,10 +733,10 @@ func (s *BlockChainAPI) GetHeaderByHash(ctx context.Context, hash common.Hash) m
 }
 
 // GetBlockByNumber returns the requested canonical block.
-// * When blockNr is -1 the chain head is returned.
-// * When blockNr is -2 the pending chain head is returned.
-// * When fullTx is true all transactions in the block are returned, otherwise
-//   only the transaction hash is returned.
+//   - When blockNr is -1 the chain head is returned.
+//   - When blockNr is -2 the pending chain head is returned.
+//   - When fullTx is true all transactions in the block are returned, otherwise
+//     only the transaction hash is returned.
 func (s *BlockChainAPI) GetBlockByNumber(ctx context.Context, number rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
 	block, err := s.b.BlockByNumber(ctx, number)
 	if block != nil && err == nil {
@@ -2587,7 +2586,7 @@ type CallBundleArgs struct {
 	Difficulty             *big.Int              `json:"difficulty"`
 	BaseFee                *big.Int              `json:"baseFee"`
 	ShowLogs               *bool                 `json:"showLogs"`
-	ShowDetails *bool `json:"showDetails"`
+	ShowDetails            *bool                 `json:"showDetails"`
 }
 
 // CallBundle will simulate a bundle of transactions at the top of a given block
@@ -2632,6 +2631,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		txs = append(txs, tx)
 	}
 
+	txArgs := make([]*TransactionArgs, len(args.Txs))
 	for i, encodedTx := range args.Txs {
 		tx := new(types.Transaction)
 		if err := tx.UnmarshalBinary(encodedTx); err != nil {
@@ -2737,7 +2737,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	}
 
 	var showDetails bool
-	if args.showDetails != nil {
+	if args.ShowDetails != nil {
 		showDetails = *args.ShowDetails
 	} else {
 		showDetails = true
@@ -2762,7 +2762,6 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	gp := new(core.GasPool).AddGas(math.MaxUint64)
 
 	results := []map[string]interface{}{}
-	
 
 	logsStartIndex := 0
 
@@ -2778,7 +2777,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		coinbaseBalanceBefore = state.GetBalance(coinbase)
 	}
 	// bundleHash = sha3.NewLegacyKeccak256()
-	
+
 	for i, tx := range txs {
 		var coinbaseBalanceBeforeTx *big.Int
 		if showDetails {
@@ -2792,7 +2791,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			result  *core.ExecutionResult
 			err     error
 		)
-		if i < len(args.TxsArgs) || ( len(args.IncreaseGasLimit) > i-len(args.TxsArgs) && args.IncreaseGasLimit[i-len(args.TxsArgs)] ) != nil {
+		if i < len(args.TxsArgs) || (len(args.IncreaseGasLimit) > (i-len(args.TxsArgs)) && args.IncreaseGasLimit[i-len(args.TxsArgs)] != nil) {
 			msg, err2 := txArgs[i].ToMessage(0, header.BaseFee)
 			if err2 != nil {
 				return nil, fmt.Errorf("errToMsg: %w; txhash %s", err2, tx.Hash())
@@ -2813,14 +2812,15 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			thisTxMyLogs = make([]MyLog, len(thisTxLogs))
 			for i, log := range thisTxLogs {
 
-			thisTxMyLogs[i] = MyLog{
-				Address: log.Address,
-				Topics:  log.Topics,
-				Data:    hexutil.Bytes(log.Data),
-				Index:   log.Index,
+				thisTxMyLogs[i] = MyLog{
+					Address: log.Address,
+					Topics:  log.Topics,
+					Data:    hexutil.Bytes(log.Data),
+					Index:   log.Index,
+				}
 			}
+			logsStartIndex = len(logs)
 		}
-		logsStartIndex = len(logs)
 
 		var jsonResult map[string]interface{}
 
@@ -2849,7 +2849,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 				"value":            tx.Value(),
 				"logs":             thisTxMyLogs,
 				"input":            hexutil.Bytes(tx.Data()),
-				"gasRefund": result.GasRefund,
+				"gasRefund":        result.GasRefund,
 			}
 			totalGasUsed += receipt.GasUsed
 			gasPrice, err := tx.EffectiveGasTip(header.BaseFee)
@@ -2881,7 +2881,6 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			}
 		}
 
-	
 		// bundleHash.Write(tx.Hash().Bytes())
 		if result.Err != nil {
 			jsonResult["error"] = result.Err.Error()
@@ -2895,7 +2894,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			// jsonResult["value"] = "0x" + string(dst)
 			jsonResult["return"] = "0x" + string(dst)
 		}
-		
+
 		// jsonResult["gasPrice"] = new(big.Int).Div(coinbaseDiffTx, big.NewInt(int64(receipt.GasUsed))).String()
 		// jsonResult["gasUsed"] = receipt.GasUsed
 		results = append(results, jsonResult)
@@ -2914,7 +2913,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		ret["stateBlockNumber"] = parent.Number.Int64()
 		ret["blockHeader"] = header
 	}
-	
+
 	// ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
 
 	if len(args.AccountsToGetBalance) > 0 {
