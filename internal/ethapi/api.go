@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"math/big"
 	"strings"
 	"time"
@@ -2573,6 +2574,7 @@ type MyLog struct {
 
 // SendBundleArgs represents the arguments for a call.
 type CallBundleArgs struct {
+	TxsArgs                []TransactionArgs     `json:"txsArgs"`
 	Txs                    []hexutil.Bytes       `json:"txs"`
 	IncreaseGasLimit       []*uint64             `json:"increaseGasLimit"`
 	AccountsToGetBalance   []common.Address      `json:"accountsToGetBalance"`
@@ -2585,6 +2587,7 @@ type CallBundleArgs struct {
 	Difficulty             *big.Int              `json:"difficulty"`
 	BaseFee                *big.Int              `json:"baseFee"`
 	ShowLogs               *bool                 `json:"showLogs"`
+	ShowDetails *bool `json:"showDetails"`
 }
 
 // CallBundle will simulate a bundle of transactions at the top of a given block
@@ -2594,7 +2597,7 @@ type CallBundleArgs struct {
 // The sender is responsible for signing the transactions and using the correct
 // nonce and ensuring validity
 func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrides *StateOverride) (map[string]interface{}, error) {
-	if len(args.Txs) == 0 {
+	if len(args.Txs) == 0 && len(args.TxsArgs) == 0 {
 		return nil, errors.New("bundle missing txs")
 	}
 
@@ -2616,7 +2619,18 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
 
 	var txs types.Transactions
-	txArgs := make([]*TransactionArgs, len(args.Txs))
+
+	for _, txArg := range args.TxsArgs {
+		if txArg.From == nil {
+			return nil, errors.New("From field is missing")
+		}
+		if err := txArg.setDefaults(ctx, s.b); err != nil {
+			return nil, err
+		}
+
+		tx := txArg.ToTransaction()
+		txs = append(txs, tx)
+	}
 
 	for i, encodedTx := range args.Txs {
 		tx := new(types.Transaction)
@@ -2722,6 +2736,13 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		showLogs = true
 	}
 
+	var showDetails bool
+	if args.showDetails != nil {
+		showDetails = *args.ShowDetails
+	} else {
+		showDetails = true
+	}
+
 	// Setup context so it may be cancelled the call has completed
 	// or, in case of unmetered gas, setup a context with a timeout.
 	var cancel context.CancelFunc
@@ -2741,25 +2762,40 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	gp := new(core.GasPool).AddGas(math.MaxUint64)
 
 	results := []map[string]interface{}{}
-	// coinbaseBalanceBefore := state.GetBalance(coinbase)
+	
 
 	logsStartIndex := 0
-	// bundleHash := sha3.NewLegacyKeccak256()
-	// signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
-	// var totalGasUsed uint64
-	// gasFees := new(big.Int)
+
+	var (
+		coinbaseBalanceBefore *big.Int
+		// bundleHash hash.Hash
+		totalGasUsed uint64
+	)
+
+	gasFees := new(big.Int)
+
+	if showDetails {
+		coinbaseBalanceBefore = state.GetBalance(coinbase)
+	}
+	// bundleHash = sha3.NewLegacyKeccak256()
+	
 	for i, tx := range txs {
-		// coinbaseBalanceBeforeTx := state.GetBalance(coinbase)
+		var coinbaseBalanceBeforeTx *big.Int
+		if showDetails {
+			coinbaseBalanceBeforeTx = state.GetBalance(coinbase)
+		}
+
 		state.Prepare(tx.Hash(), i)
 
-		var receipt *types.Receipt
-		var result *core.ExecutionResult
-		var err error
-		if len(args.IncreaseGasLimit) > i && args.IncreaseGasLimit[i] != nil {
-			var msg types.Message
-			msg, err = txArgs[i].ToMessage(0, header.BaseFee)
-			if err != nil {
-				return nil, fmt.Errorf("errToMsg: %w; txhash %s", err, tx.Hash())
+		var (
+			receipt *types.Receipt
+			result  *core.ExecutionResult
+			err     error
+		)
+		if i < len(args.TxsArgs) || ( len(args.IncreaseGasLimit) > i-len(args.TxsArgs) && args.IncreaseGasLimit[i-len(args.TxsArgs)] ) != nil {
+			msg, err2 := txArgs[i].ToMessage(0, header.BaseFee)
+			if err2 != nil {
+				return nil, fmt.Errorf("errToMsg: %w; txhash %s", err2, tx.Hash())
 			}
 			receipt, result, err = core.ApplyTransactionArgsWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &msg, &header.GasUsed, vmconfig)
 		} else {
@@ -2777,48 +2813,75 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			thisTxMyLogs = make([]MyLog, len(thisTxLogs))
 			for i, log := range thisTxLogs {
 
-				thisTxMyLogs[i] = MyLog{
-					Address: log.Address,
-					Topics:  log.Topics,
-					Data:    hexutil.Bytes(log.Data),
-					Index:   log.Index,
-				}
+			thisTxMyLogs[i] = MyLog{
+				Address: log.Address,
+				Topics:  log.Topics,
+				Data:    hexutil.Bytes(log.Data),
+				Index:   log.Index,
 			}
-			logsStartIndex = len(logs)
+		}
+		logsStartIndex = len(logs)
+
+		var jsonResult map[string]interface{}
+
+		if showDetails {
+			txHash := tx.Hash().String()
+			from, err := types.Sender(signer, tx)
+			if err != nil {
+				return nil, fmt.Errorf("err2: %w; txhash %s", err, tx.Hash())
+			}
+			to := "0x"
+			if tx.To() != nil {
+				to = tx.To().String()
+			}
+
+			jsonResult = map[string]interface{}{
+				"txHash":           txHash,
+				"gasUsed":          receipt.GasUsed,
+				"transactionHash":  txHash,
+				"from":             from.String(),
+				"to":               to,
+				"transactionIndex": receipt.TransactionIndex,
+				"gasPrice":         tx.GasPrice(),
+				"baseFee":          header.BaseFee.String(),
+				"gasLimit":         tx.Gas(), // not sure this is min...
+				"nonce":            tx.Nonce(),
+				"value":            tx.Value(),
+				"logs":             thisTxMyLogs,
+				"input":            hexutil.Bytes(tx.Data()),
+				"gasRefund": result.GasRefund,
+			}
+			totalGasUsed += receipt.GasUsed
+			gasPrice, err := tx.EffectiveGasTip(header.BaseFee)
+			if err != nil {
+				return nil, fmt.Errorf("err: %w; txhash %s", err, tx.Hash())
+			}
+			gasFeesTx := new(big.Int).Mul(big.NewInt(int64(receipt.GasUsed)), gasPrice)
+			gasFees.Add(gasFees, gasFeesTx)
+
+			coinbaseDiffTx := new(big.Int).Sub(state.GetBalance(coinbase), coinbaseBalanceBeforeTx)
+			jsonResult["coinbaseDiff"] = coinbaseDiffTx.String()
+			jsonResult["gasFees"] = gasFeesTx.String()
+			jsonResult["ethSentToCoinbase"] = new(big.Int).Sub(coinbaseDiffTx, gasFeesTx).String()
+		} else {
+			jsonResult = map[string]interface{}{
+				// "txHash":           txHash,
+				"gasUsed": receipt.GasUsed,
+				// "transactionHash":  txHash,
+				// "from": from.String(),
+				// "to":   to,
+				// "transactionIndex": receipt.TransactionIndex,
+				// "gasPrice": tx.GasPrice(),
+				"gasLimit": tx.Gas(), // not sure this is min...
+				// "nonce":            tx.Nonce(),
+				// "value":            tx.Value(),
+				"logs": thisTxMyLogs,
+				// "input":            hexutil.Bytes(tx.Data()),
+				"gasRefund": result.GasRefund,
+			}
 		}
 
-		// txHash := tx.Hash().String()
-		// from, err := types.Sender(signer, tx)
-		// if err != nil {
-		// 	return nil, fmt.Errorf("err2: %w; txhash %s", err, tx.Hash())
-		// }
-		// to := "0x"
-		// if tx.To() != nil {
-		// 	to = tx.To().String()
-		// }
-		jsonResult := map[string]interface{}{
-			// "txHash":           txHash,
-			"gasUsed": receipt.GasUsed,
-			// "transactionHash":  txHash,
-			// "from": from.String(),
-			// "to":   to,
-			// "transactionIndex": receipt.TransactionIndex,
-			// "gasPrice": tx.GasPrice(),
-			"gasLimit": tx.Gas(), // not sure this is min...
-			// "nonce":            tx.Nonce(),
-			// "value":            tx.Value(),
-			"logs": thisTxMyLogs,
-			// "input":            hexutil.Bytes(tx.Data()),
-			"gasRefund": result.GasRefund,
-		}
-
-		// totalGasUsed += receipt.GasUsed
-		// gasPrice, err := tx.EffectiveGasTip(header.BaseFee)
-		if err != nil {
-			return nil, fmt.Errorf("err: %w; txhash %s", err, tx.Hash())
-		}
-		// gasFeesTx := new(big.Int).Mul(big.NewInt(int64(receipt.GasUsed)), gasPrice)
-		// gasFees.Add(gasFees, gasFeesTx)
+	
 		// bundleHash.Write(tx.Hash().Bytes())
 		if result.Err != nil {
 			jsonResult["error"] = result.Err.Error()
@@ -2832,10 +2895,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			// jsonResult["value"] = "0x" + string(dst)
 			jsonResult["return"] = "0x" + string(dst)
 		}
-		// coinbaseDiffTx := new(big.Int).Sub(state.GetBalance(coinbase), coinbaseBalanceBeforeTx)
-		// jsonResult["coinbaseDiff"] = coinbaseDiffTx.String()
-		// jsonResult["gasFees"] = gasFeesTx.String()
-		// jsonResult["ethSentToCoinbase"] = new(big.Int).Sub(coinbaseDiffTx, gasFeesTx).String()
+		
 		// jsonResult["gasPrice"] = new(big.Int).Div(coinbaseDiffTx, big.NewInt(int64(receipt.GasUsed))).String()
 		// jsonResult["gasUsed"] = receipt.GasUsed
 		results = append(results, jsonResult)
@@ -2843,14 +2903,18 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 
 	ret := map[string]interface{}{}
 	ret["results"] = results
-	// coinbaseDiff := new(big.Int).Sub(state.GetBalance(coinbase), coinbaseBalanceBefore)
-	// ret["coinbaseDiff"] = coinbaseDiff.String()
-	// ret["gasFees"] = gasFees.String()
-	// ret["ethSentToCoinbase"] = new(big.Int).Sub(coinbaseDiff, gasFees).String()
-	// ret["bundleGasPrice"] = new(big.Int).Div(coinbaseDiff, big.NewInt(int64(totalGasUsed))).String()
-	// ret["totalGasUsed"] = totalGasUsed
-	// ret["stateBlockNumber"] = parent.Number.Int64()
-	// ret["blockHeader"] = header
+
+	if showDetails {
+		coinbaseDiff := new(big.Int).Sub(state.GetBalance(coinbase), coinbaseBalanceBefore)
+		ret["coinbaseDiff"] = coinbaseDiff.String()
+		ret["gasFees"] = gasFees.String()
+		ret["ethSentToCoinbase"] = new(big.Int).Sub(coinbaseDiff, gasFees).String()
+		ret["bundleGasPrice"] = new(big.Int).Div(coinbaseDiff, big.NewInt(int64(totalGasUsed))).String()
+		ret["totalGasUsed"] = totalGasUsed
+		ret["stateBlockNumber"] = parent.Number.Int64()
+		ret["blockHeader"] = header
+	}
+	
 	// ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
 
 	if len(args.AccountsToGetBalance) > 0 {
