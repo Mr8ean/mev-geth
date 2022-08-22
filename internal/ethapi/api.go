@@ -2635,66 +2635,12 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		blockNumber = big.NewInt(int64(args.BlockNumber))
 	}
 
-	// signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
-
 	var txs types.Transactions
-	// txArgs := make([]*TransactionArgs, len(args.Txs))
-
 	for _, encodedTx := range args.Txs {
 		tx := new(types.Transaction)
 		if err := tx.UnmarshalBinary(encodedTx); err != nil {
 			return nil, err
 		}
-		// if len(args.IncreaseGasLimit) > i && args.IncreaseGasLimit[i] != nil {
-		// 	from, err := types.Sender(signer, tx)
-		// 	if err != nil {
-		// 		return nil, fmt.Errorf("errInc: %w; txhash %s", err, tx.Hash())
-		// 	}
-
-		// 	// make sure we dont surpass the max gas limit
-		// 	increaseGasLimit := new(big.Int).SetUint64(*args.IncreaseGasLimit[i])
-		// 	accBalance := state.GetBalance(from)
-		// 	if tx.GasFeeCap().BitLen() > 0 {
-		// 		maxGasLimit := new(big.Int).Div(new(big.Int).Sub(accBalance, tx.Value()), tx.GasFeeCap())
-		// 		if maxGasLimit.Cmp(increaseGasLimit) < 0 {
-		// 			increaseGasLimit = maxGasLimit
-		// 		}
-		// 	}
-		// 	_increaseGasLimit := increaseGasLimit.Uint64()
-
-		// 	data := hexutil.Bytes(tx.Data())
-		// 	acc := tx.AccessList()
-		// 	nonce := tx.Nonce()
-
-		// 	if tx.GasFeeCap() != nil {
-		// 		txArgs[i] = &TransactionArgs{
-		// 			From:                 &from,
-		// 			To:                   tx.To(),
-		// 			Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
-		// 			Value:                (*hexutil.Big)(tx.Value()),
-		// 			Data:                 &data,
-		// 			AccessList:           &acc,
-		// 			MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
-		// 			MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
-		// 			ChainID:              (*hexutil.Big)(tx.ChainId()),
-		// 			Nonce:                (*hexutil.Uint64)(&nonce),
-		// 		}
-		// 	} else {
-		// 		txArgs[i] = &TransactionArgs{
-		// 			From:       &from,
-		// 			To:         tx.To(),
-		// 			Gas:        (*hexutil.Uint64)(&_increaseGasLimit),
-		// 			GasPrice:   (*hexutil.Big)(tx.GasPrice()),
-		// 			Value:      (*hexutil.Big)(tx.Value()),
-		// 			Data:       &data,
-		// 			AccessList: &acc,
-		// 			ChainID:    (*hexutil.Big)(tx.ChainId()),
-		// 			Nonce:      (*hexutil.Uint64)(&nonce),
-		// 		}
-		// 	}
-
-		// 	tx = txArgs[i].ToTransaction()
-		// }
 		txs = append(txs, tx)
 	}
 	defer func(start time.Time) { log.Debug("Executing EVM call finished", "runtime", time.Since(start)) }(time.Now())
