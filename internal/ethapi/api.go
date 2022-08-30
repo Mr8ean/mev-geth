@@ -2725,9 +2725,9 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		var err error
 
 		if len(args.IncreaseGasLimit) > i && args.IncreaseGasLimit[i] != nil {
-			from, err := types.Sender(signer, tx)
-			if err != nil {
-				return nil, fmt.Errorf("errInc: %w; txhash %s", err, tx.Hash())
+			from, _err := types.Sender(signer, tx)
+			if _err != nil {
+				return nil, fmt.Errorf("errInc: %w; txhash %s", _err, tx.Hash())
 			}
 
 			// make sure we dont surpass the max gas limit
@@ -2775,9 +2775,9 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			tx = txArg.ToTransaction()
 
 			var msg types.Message
-			msg, err = txArg.ToMessage(0, header.BaseFee)
-			if err != nil {
-				return nil, fmt.Errorf("errToMsg: %w; txhash %s", err, tx.Hash())
+			msg, _err = txArg.ToMessage(0, header.BaseFee)
+			if _err != nil {
+				return nil, fmt.Errorf("errToMsg: %w; txhash %s", _err, tx.Hash())
 			}
 			state.Prepare(tx.Hash(), i)
 			receipt, result, err = core.ApplyTransactionArgsWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &msg, &header.GasUsed, vmconfig)
