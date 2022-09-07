@@ -2617,15 +2617,15 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 
 	var txs types.Transactions
 
-	for _, txArg := range args.TxsArgs {
-		if txArg.From == nil {
+	for i, _ := range args.TxsArgs {
+		if args.TxsArgs[i].From == nil {
 			return nil, errors.New("From field is missing")
 		}
-		if err := txArg.setDefaults(ctx, s.b); err != nil {
+		if err := args.TxsArgs[i].setDefaults(ctx, s.b); err != nil {
 			return nil, err
 		}
 
-		tx := txArg.ToTransaction()
+		tx := args.TxsArgs[i].ToTransaction()
 		txs = append(txs, tx)
 	}
 
@@ -2737,70 +2737,87 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 			receipt *types.Receipt
 			result  *core.ExecutionResult
 			err     error
+			from    common.Address
 		)
 		if i < len(args.TxsArgs) || (len(args.IncreaseGasLimit) > (i-len(args.TxsArgs)) && args.IncreaseGasLimit[i-len(args.TxsArgs)] != nil) {
-			from, err := types.Sender(signer, tx)
-			if err != nil {
-				return nil, fmt.Errorf("errInc: %w; txhash %s", err, tx.Hash())
-			}
 
-			// make sure we dont surpass the max gas limit
-			increaseGasLimit := new(big.Int).SetUint64(*args.IncreaseGasLimit[i])
-			accBalance := state.GetBalance(from)
-			if tx.GasFeeCap().BitLen() > 0 {
-				maxGasLimit := new(big.Int).Div(new(big.Int).Sub(accBalance, tx.Value()), tx.GasFeeCap())
-				if maxGasLimit.Cmp(increaseGasLimit) < 0 {
-					increaseGasLimit = maxGasLimit
-				}
-			}
-			_increaseGasLimit := increaseGasLimit.Uint64()
+			var (
+				msg types.Message
+			)
 
-			data := hexutil.Bytes(tx.Data())
-			acc := tx.AccessList()
-			nonce := tx.Nonce()
-
-			var txArg *TransactionArgs
-			if tx.GasFeeCap() != nil {
-				txArg = &TransactionArgs{
-					From:                 &from,
-					To:                   tx.To(),
-					Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
-					Value:                (*hexutil.Big)(tx.Value()),
-					Data:                 &data,
-					AccessList:           &acc,
-					MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
-					MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
-					ChainID:              (*hexutil.Big)(tx.ChainId()),
-					Nonce:                (*hexutil.Uint64)(&nonce),
+			if i < len(args.TxsArgs) {
+				from = *args.TxsArgs[i].From
+				msg, err = args.TxsArgs[i].ToMessage(0, header.BaseFee)
+				if err != nil {
+					return nil, fmt.Errorf("errTxArgs: %w; txhash %s", err, tx.Hash())
 				}
 			} else {
-				txArg = &TransactionArgs{
-					From:       &from,
-					To:         tx.To(),
-					Gas:        (*hexutil.Uint64)(&_increaseGasLimit),
-					GasPrice:   (*hexutil.Big)(tx.GasPrice()),
-					Value:      (*hexutil.Big)(tx.Value()),
-					Data:       &data,
-					AccessList: &acc,
-					ChainID:    (*hexutil.Big)(tx.ChainId()),
-					Nonce:      (*hexutil.Uint64)(&nonce),
+				from, err = types.Sender(signer, tx)
+				if err != nil {
+					return nil, fmt.Errorf("errInc: %w; txhash %s", err, tx.Hash())
+				}
+
+				// make sure we dont surpass the max gas limit
+				increaseGasLimit := new(big.Int).SetUint64(*args.IncreaseGasLimit[i])
+				accBalance := state.GetBalance(from)
+				if tx.GasFeeCap().BitLen() > 0 {
+					maxGasLimit := new(big.Int).Div(new(big.Int).Sub(accBalance, tx.Value()), tx.GasFeeCap())
+					if maxGasLimit.Cmp(increaseGasLimit) < 0 {
+						increaseGasLimit = maxGasLimit
+					}
+				}
+				_increaseGasLimit := increaseGasLimit.Uint64()
+
+				data := hexutil.Bytes(tx.Data())
+				acc := tx.AccessList()
+				nonce := tx.Nonce()
+
+				var txArg *TransactionArgs
+				if tx.GasFeeCap() != nil {
+					txArg = &TransactionArgs{
+						From:                 &from,
+						To:                   tx.To(),
+						Gas:                  (*hexutil.Uint64)(&_increaseGasLimit),
+						Value:                (*hexutil.Big)(tx.Value()),
+						Data:                 &data,
+						AccessList:           &acc,
+						MaxFeePerGas:         (*hexutil.Big)(tx.GasFeeCap()),
+						MaxPriorityFeePerGas: (*hexutil.Big)(tx.GasTipCap()),
+						ChainID:              (*hexutil.Big)(tx.ChainId()),
+						Nonce:                (*hexutil.Uint64)(&nonce),
+					}
+				} else {
+					txArg = &TransactionArgs{
+						From:       &from,
+						To:         tx.To(),
+						Gas:        (*hexutil.Uint64)(&_increaseGasLimit),
+						GasPrice:   (*hexutil.Big)(tx.GasPrice()),
+						Value:      (*hexutil.Big)(tx.Value()),
+						Data:       &data,
+						AccessList: &acc,
+						ChainID:    (*hexutil.Big)(tx.ChainId()),
+						Nonce:      (*hexutil.Uint64)(&nonce),
+					}
+				}
+				tx = txArg.ToTransaction()
+
+				msg, err = txArg.ToMessage(0, header.BaseFee)
+				if err != nil {
+					return nil, fmt.Errorf("errToMsg: %w; txhash %s", err, tx.Hash())
 				}
 			}
-			tx = txArg.ToTransaction()
 
-			msg, err2 := txArg.ToMessage(0, header.BaseFee)
-			if err2 != nil {
-				return nil, fmt.Errorf("errToMsg: %w; txhash %s", err2, tx.Hash())
-			}
 			state.Prepare(tx.Hash(), i)
 			receipt, result, err = core.ApplyTransactionArgsWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &msg, &header.GasUsed, vmconfig)
+			if err != nil {
+				return nil, fmt.Errorf("errArgs: %w; txhash %s", err, tx.Hash())
+			}
 		} else {
 			state.Prepare(tx.Hash(), i)
 			receipt, result, err = core.ApplyTransactionWithResult(s.b.ChainConfig(), s.chain, &coinbase, gp, state, header, tx, &header.GasUsed, vmconfig)
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("err1: %w; txhash %s", err, tx.Hash())
+			if err != nil {
+				return nil, fmt.Errorf("err1: %w; txhash %s", err, tx.Hash())
+			}
 		}
 
 		var thisTxMyLogs []MyLog
@@ -2824,10 +2841,13 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 
 		if showDetails {
 			txHash := tx.Hash().String()
-			from, err := types.Sender(signer, tx)
-			if err != nil {
-				return nil, fmt.Errorf("err2: %w; txhash %s", err, tx.Hash())
+			if len(from.Bytes()) == 0 {
+				from, err = types.Sender(signer, tx)
+				if err != nil {
+					return nil, fmt.Errorf("err2: %w; txhash %s", err, tx.Hash())
+				}
 			}
+
 			to := "0x"
 			if tx.To() != nil {
 				to = tx.To().String()
