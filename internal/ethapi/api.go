@@ -2841,7 +2841,8 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 
 		if showDetails {
 			txHash := tx.Hash().String()
-			if len(from.Bytes()) == 0 {
+
+			if from.Hash().Big().BitLen() == 0 {
 				from, err = types.Sender(signer, tx)
 				if err != nil {
 					return nil, fmt.Errorf("err2: %w; txhash %s", err, tx.Hash())
