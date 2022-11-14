@@ -2665,7 +2665,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		return nil, err
 	}
 
-	realMixDigest := s.b.Engine().APIs(s.chain)[0].Service //.localBlocks.payloads[0].data.block.MixDigest()
+	realMixDigest := *(&s.b.Engine().APIs(s.chain)[0].Service) //.localBlocks.payloads[0].data.block.MixDigest()
 	log.Info("debugging mix digest", "service", realMixDigest)
 
 	header := &types.Header{
