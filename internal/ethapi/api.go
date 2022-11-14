@@ -2664,6 +2664,10 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	if n, err := rand.Read(MixDigest[:]); n != common.HashLength || err != nil {
 		return nil, err
 	}
+
+	realMixDigest := s.b.Engine().APIs(s.chain)[0].Service //.localBlocks.payloads[0].data.block.MixDigest()
+	log.Info("debugging mix digest", "service", realMixDigest)
+
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     blockNumber,
