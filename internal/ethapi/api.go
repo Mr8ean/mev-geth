@@ -2660,6 +2660,10 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 	} else if s.b.ChainConfig().IsLondon(blockNumber) {
 		baseFee = misc.CalcBaseFee(s.b.ChainConfig(), parent)
 	}
+	var MixDigest common.Hash
+	if n, err := rand.Read(MixDigest[:]); n != common.HashLength || err != nil {
+		return nil, err
+	}
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     blockNumber,
@@ -2668,6 +2672,7 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs, overrid
 		Difficulty: difficulty,
 		Coinbase:   coinbase,
 		BaseFee:    baseFee,
+		MixDigest:  MixDigest,
 	}
 
 	var showLogs bool
